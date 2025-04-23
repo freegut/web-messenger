@@ -1,46 +1,237 @@
-import asyncio
+from redis.asyncio import Redis
 from aiohttp import web
-import aioredis
 import json
+import aiohttp_cors
+import bcrypt
+import secrets
 
 class ChatServer:
     def __init__(self):
-        self.clients = {}
+        self.clients = {}  # {ws: username}
+        self.sessions = {}  # {session_token: username}
         self.redis = None
+        self.conferences = {}  # {conf_id: {admin: username, members: set(usernames)}}
 
     async def init_redis(self):
-        self.redis = await aioredis.from_url("redis://redis")
+        self.redis = Redis.from_url("redis://redis", decode_responses=True)
 
     async def websocket_handler(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-
-        async for msg in ws:
-            if msg.type == web.WSMsgType.TEXT:
-                data = json.loads(msg.data)
-                if data["type"] == "register":
-                    await self.register(ws, data)
-                elif data["type"] == "message":
-                    await self.broadcast(ws, data)
-
+        
+        try:
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    if data["type"] == "login":
+                        await self.login_user(ws, data)
+                    elif data["type"] == "register_user" and await self.is_admin(ws):
+                        await self.register_user(ws, data)
+                    elif data["type"] == "change_password" and await self.is_admin(ws):
+                        await self.change_password(ws, data)
+                    elif data["type"] == "delete_user" and await self.is_admin(ws):
+                        await self.delete_user(ws, data)
+                    elif data["type"] == "message":
+                        await self.send_message(ws, data)
+                    elif data["type"] == "create_conference":
+                        await self.create_conference(ws, data)
+                    elif data["type"] == "get_public_key":
+                        await self.get_public_key(ws, data)
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            await self.remove_client(ws)
         return ws
 
-    async def register(self, ws, data):
-        username = data["username"]
-        await self.redis.set(f"user:{username}:pubkey", data["pubkey"])
-        self.clients[ws] = username
+    async def is_admin(self, ws):
+        username = self.clients.get(ws)
+        if not username:
+            return False
+        is_admin = await self.redis.get(f"user:{username}:is_admin")
+        return is_admin == "true"
 
-    async def broadcast(self, sender_ws, data):
+    async def register_user(self, ws, data):
+        username = data["username"]
+        password = data["password"]
+        pubkey = data["pubkey"]
+        is_admin = data.get("is_admin", False)
+        
+        if await self.redis.exists(f"user:{username}:password"):
+            await ws.send_json({
+                "type": "error",
+                "message": "Username already exists"
+            })
+            return
+        
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        await self.redis.set(f"user:{username}:password", hashed.decode('utf-8'))
+        await self.redis.set(f"user:{username}:pubkey", pubkey)
+        if is_admin:
+            await self.redis.set(f"user:{username}:is_admin", "true")
+        
+        await ws.send_json({
+            "type": "register_success",
+            "message": f"User {username} registered"
+        })
+
+    async def change_password(self, ws, data):
+        target_username = data["username"]
+        new_password = data["password"]
+        
+        if not await self.redis.exists(f"user:{target_username}:password"):
+            await ws.send_json({
+                "type": "error",
+                "message": f"User {target_username} not found"
+            })
+            return
+        
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        await self.redis.set(f"user:{target_username}:password", hashed.decode('utf-8'))
+        
+        await ws.send_json({
+            "type": "change_password_success",
+            "message": f"Password changed for {target_username}"
+        })
+
+    async def delete_user(self, ws, data):
+        target_username = data["username"]
+        
+        if not await self.redis.exists(f"user:{target_username}:password"):
+            await ws.send_json({
+                "type": "error",
+                "message": f"User {target_username} not found"
+            })
+            return
+        
+        await self.redis.delete(f"user:{target_username}:password")
+        await self.redis.delete(f"user:{target_username}:pubkey")
+        await self.redis.delete(f"user:{target_username}:is_admin")
+        
+        await ws.send_json({
+            "type": "delete_user_success",
+            "message": f"User {target_username} deleted"
+        })
+
+    async def login_user(self, ws, data):
+        username = data["username"]
+        password = data["password"]
+        
+        stored_hash = await self.redis.get(f"user:{username}:password")
+        if stored_hash and bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+            session_token = secrets.token_hex(32)
+            self.sessions[session_token] = username
+            self.clients[ws] = username
+            is_admin = await self.redis.get(f"user:{username}:is_admin") == "true"
+            await ws.send_json({
+                "type": "login_success",
+                "session_token": session_token,
+                "is_admin": is_admin
+            })
+            await self.broadcast_user_list()
+        else:
+            await ws.send_json({
+                "type": "error",
+                "message": "Invalid username or password"
+            })
+
+    async def send_message(self, sender_ws, data):
+        sender = self.clients.get(sender_ws)
+        recipient = data["recipient"]
+        encrypted_message = data["text"]
+        
+        recipient_ws = None
         for ws, username in self.clients.items():
-            if ws != sender_ws:
-                await ws.send_json(data)
+            if username == recipient:
+                recipient_ws = ws
+                break
+        
+        if recipient_ws:
+            can_send = True
+            for conf_id, conf in self.conferences.items():
+                if sender in conf["members"] and recipient in conf["members"]:
+                    can_send = False
+                    break
+            
+            if can_send:
+                await recipient_ws.send_json({
+                    "type": "message",
+                    "from": sender,
+                    "text": encrypted_message
+                })
+            else:
+                await sender_ws.send_json({
+                    "type": "error",
+                    "message": "Private messaging restricted in conference"
+                })
+        else:
+            await sender_ws.send_json({
+                "type": "error",
+                "message": f"User {recipient} not found"
+            })
+
+    async def create_conference(self, sender_ws, data):
+        conf_id = data["conf_id"]
+        members = data["members"]
+        admin = self.clients.get(sender_ws)
+        
+        valid_members = set()
+        for username in members:
+            if await self.redis.exists(f"user:{username}:pubkey"):
+                valid_members.add(username)
+        
+        self.conferences[conf_id] = {
+            "admin": admin,
+            "members": valid_members | {admin}
+        }
+        
+        for ws, username in self.clients.items():
+            if username in self.conferences[conf_id]["members"]:
+                await ws.send_json({
+                    "type": "conference_update",
+                    "conf_id": conf_id,
+                    "members": list(self.conferences[conf_id]["members"])
+                })
+
+    async def get_public_key(self, ws, data):
+        username = data["username"]
+        pubkey = await self.redis.get(f"user:{username}:pubkey")
+        await ws.send_json({
+            "type": "public_key",
+            "username": username,
+            "pubkey": pubkey if pubkey else ""
+        })
+
+    async def remove_client(self, ws):
+        if ws in self.clients:
+            username = self.clients[ws]
+            del self.clients[ws]
+            await self.broadcast_user_list()
+
+    async def broadcast_user_list(self):
+        users = list(self.clients.values())
+        for ws in self.clients:
+            await ws.send_json({
+                "type": "user_list",
+                "users": users
+            })
 
 async def init_app():
     server = ChatServer()
     await server.init_redis()
     
     app = web.Application()
-    app.router.add_get("/ws", server.websocket_handler)
+    # Добавляем маршрут с именем 'ws'
+    route = app.router.add_get("/ws", server.websocket_handler, name="ws")
+    
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+        )
+    })
+    cors.add(route)
+    
     return app
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
-#chat {
-    width: 400px;
-    margin: 0 auto;
+#chat, #login, #admin-panel {
+    width: 500px;
+    margin: 20px auto;
     border: 1px solid #ccc;
     padding: 20px;
+    font-family: Arial, sans-serif;
 }
 #messages {
     height: 300px;
@@ -10,4 +11,28 @@
     border: 1px solid #eee;
     margin-bottom: 10px;
     padding: 10px;
+}
+#recipient, #message-input, #conf-id, #conf-members, #login-username, #login-password,
+#admin-reg-username, #admin-reg-password, #admin-change-username, #admin-change-password, #admin-delete-username {
+    padding: 5px;
+    margin: 5px 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+#send-btn, #create-conf-btn, #login-btn, #register-user-btn, #change-password-btn, #delete-user-btn {
+    padding: 5px 10px;
+    margin: 5px 0;
+    cursor: pointer;
+}
+#conferences {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #eee;
+}
+h2, h3 {
+    margin: 0 0 10px;
+}
+label {
+    margin: 5px 0;
+    display: block;
 }
