@@ -1,27 +1,31 @@
 services:
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
   server:
     build: ./server
     ports:
       - "8765:8765"
-    depends_on:
-      - redis
-    environment:
-      - REDIS_URL=redis://redis
     volumes:
-      - ./server:/app
-  nginx:
-    image: nginx:alpine
+      - ./server/chat.db:/app/chat.db
+    environment:
+      - MASTER_KEY=your-secure-master-key-here  # Замените на безопасный ключ
+    networks:
+      - chat-network
+
+  client:
+    build: ./client
     ports:
       - "8000:80"
-    volumes:
-      - ./client/static:/usr/share/nginx/html
     depends_on:
       - server
-volumes:
-  redis_data:
+    networks:
+      - chat-network
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - chat-network
+
+networks:
+  chat-network:
+    driver: bridge

@@ -8,8 +8,19 @@ import os
 import datetime
 from cryptography.fernet import Fernet
 
+print("Starting server...")
+
+# Получаем мастер-ключ из переменной окружения
+MASTER_KEY = os.getenv("MASTER_KEY")
+if not MASTER_KEY:
+    print("MASTER_KEY not set, generating a new one...")
+    MASTER_KEY = Fernet.generate_key().decode()
+MASTER_FERNET = Fernet(MASTER_KEY.encode())
+print("Master key initialized")
+
 # Инициализация базы данных
 def init_db():
+    print("Initializing database...")
     conn = sqlite3.connect("chat.db")
     c = conn.cursor()
     # Таблица пользователей
@@ -43,6 +54,7 @@ def init_db():
               ("admin", hashlib.sha256("WhereMainShell".encode()).hexdigest(), 1, "{}"))
     conn.commit()
     conn.close()
+    print("Database initialized")
 
 init_db()
 
@@ -52,7 +64,9 @@ public_keys = {}  # username -> pubkey
 
 # Функции шифрования
 def generate_conference_key():
-    return Fernet.generate_key().decode()
+    key = Fernet.generate_key().decode()
+    encrypted_key = MASTER_FERNET.encrypt(key.encode()).decode()
+    return key, encrypted_key
 
 def encrypt_message(message, key):
     fernet = Fernet(key.encode())
@@ -61,6 +75,9 @@ def encrypt_message(message, key):
 def decrypt_message(encrypted_message, key):
     fernet = Fernet(key.encode())
     return fernet.decrypt(encrypted_message.encode()).decode()
+
+def decrypt_conference_key(encrypted_key):
+    return MASTER_FERNET.decrypt(encrypted_key.encode()).decode()
 
 async def handle_connection(websocket, path):
     print("New connection")
@@ -110,36 +127,25 @@ async def handle_connection(websocket, path):
                     conn.commit()
                     conn.close()
 
-            elif data["type"] == "message":
-                for recipient in data["recipients"]:
-                    if recipient in connections:
-                        await connections[recipient].send(json.dumps({
-                            "type": "message",
-                            "from": username,
-                            "text": data["encrypted_messages"][recipient]
-                        }))
-
             elif data["type"] == "create_conference":
                 conf_id = data["conf_id"]
                 members = data["members"]
                 conn = sqlite3.connect("chat.db")
                 c = conn.cursor()
-                # Удаляем старую конференцию
                 c.execute("DELETE FROM conferences WHERE conf_id = ?", (conf_id,))
-                # Добавляем участников
                 for member in members:
                     c.execute("INSERT INTO conferences (conf_id, username) VALUES (?, ?)", (conf_id, member))
-                # Генерируем ключ шифрования, если его нет
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
                 if not key:
-                    encryption_key = generate_conference_key()
+                    key, encrypted_key = generate_conference_key()
                     c.execute("INSERT INTO conference_keys (conf_id, encryption_key) VALUES (?, ?)",
-                              (conf_id, encryption_key))
+                              (conf_id, encrypted_key))
+                else:
+                    key = decrypt_conference_key(key[0])
                 conn.commit()
                 conn.close()
                 print(f"Creating conference {conf_id} with members: {members}")
-                # Отправка обновления всем участникам
                 for member in members:
                     if member in connections:
                         print(f"Sending conference update: {json.dumps({'type': 'conference_update', 'conf_id': conf_id, 'members': members})}")
@@ -154,7 +160,6 @@ async def handle_connection(websocket, path):
                 encrypted_messages = data["encrypted_messages"]
                 conn = sqlite3.connect("chat.db")
                 c = conn.cursor()
-                # Получаем ключ шифрования конференции
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
                 if not key:
@@ -164,18 +169,14 @@ async def handle_connection(websocket, path):
                     }))
                     conn.close()
                     continue
-                encryption_key = key[0]
-                # Сохраняем сообщение в зашифрованном виде
-                # Для примера зашифруем исходное сообщение от отправителя
+                encryption_key = decrypt_conference_key(key[0])
                 encrypted_message = encrypt_message(f"{username}: [Encrypted]", encryption_key)
                 c.execute("INSERT INTO conference_messages (conf_id, sender, encrypted_message, timestamp) VALUES (?, ?, ?, ?)",
                           (conf_id, username, encrypted_message, datetime.datetime.now().isoformat()))
-                # Получаем участников конференции
                 c.execute("SELECT username FROM conferences WHERE conf_id = ?", (conf_id,))
                 members = [row[0] for row in c.fetchall()]
                 conn.commit()
                 conn.close()
-                # Отправляем сообщение участникам
                 for member in members:
                     if member == username:
                         continue
@@ -286,7 +287,6 @@ async def handle_connection(websocket, path):
                 conf_id = data["conf_id"]
                 conn = sqlite3.connect("chat.db")
                 c = conn.cursor()
-                # Получаем ключ шифрования
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
                 if not key:
@@ -296,8 +296,7 @@ async def handle_connection(websocket, path):
                     }))
                     conn.close()
                     continue
-                encryption_key = key[0]
-                # Получаем сообщения
+                encryption_key = decrypt_conference_key(key[0])
                 c.execute("SELECT sender, encrypted_message, timestamp FROM conference_messages WHERE conf_id = ? ORDER BY timestamp",
                           (conf_id,))
                 messages = c.fetchall()
@@ -347,6 +346,7 @@ def is_admin(username):
     conn.close()
     return result and result[0]
 
+print("Starting WebSocket server on ws://localhost:8765")
 start_server = websockets.serve(handle_connection, "localhost", 8765)
 
 asyncio.get_event_loop().run_until_complete(start_server)

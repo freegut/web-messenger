@@ -39,6 +39,9 @@ class SecureChat {
                 if (this.isAdmin) {
                     document.getElementById("tabs").style.display = "flex";
                     document.getElementById("create-conf-btn-modal").style.display = "block";
+                    document.querySelectorAll(".tab-btn[data-tab='register-tab'], .tab-btn[data-tab='change-password-tab'], .tab-btn[data-tab='delete-tab']").forEach(btn => {
+                        btn.style.display = "block";
+                    });
                 }
                 await this.generateKeys();
                 this.ws.send(JSON.stringify({
@@ -51,7 +54,6 @@ class SecureChat {
                 this.ws.send(JSON.stringify({
                     type: "get_conferences"
                 }));
-                this.showGlobalChat();
                 this.updateLastActivity(this.username);
                 break;
             case "error":
@@ -63,10 +65,6 @@ class SecureChat {
             case "all_users":
                 this.users = data.users;
                 this.renderUserList();
-                break;
-            case "message":
-                this.displayMessage(data.from, data.text);
-                this.updateLastActivity(data.from);
                 break;
             case "conference_update":
                 this.updateConference(data.conf_id, data.members);
@@ -148,7 +146,6 @@ class SecureChat {
     setupListeners() {
         console.log("Setting up listeners");
         document.getElementById("login-btn").addEventListener("click", () => this.login());
-        document.getElementById("send-btn").addEventListener("click", () => this.sendMessage());
         document.getElementById("register-user-btn").addEventListener("click", () => this.registerUser());
         document.getElementById("change-password-btn").addEventListener("click", () => this.changePassword());
         document.getElementById("delete-selected-btn").addEventListener("click", () => this.deleteSelectedUsers());
@@ -158,7 +155,6 @@ class SecureChat {
             button.addEventListener("click", () => {
                 document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
                 document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-                document.getElementById("global-messages").classList.remove("active");
                 document.getElementById("conference-content").classList.remove("active");
                 
                 button.classList.add("active");
@@ -168,14 +164,6 @@ class SecureChat {
                 }
             });
         });
-    }
-
-    showGlobalChat() {
-        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-        document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-        document.getElementById("conference-content").classList.remove("active");
-        document.getElementById("global-messages").classList.add("active");
-        this.currentConference = null;
     }
 
     logout() {
@@ -212,56 +200,6 @@ class SecureChat {
             username: this.username,
             password: password
         }));
-    }
-
-    async sendMessage() {
-        const message = document.getElementById("message-input").value.trim();
-        if (!message) {
-            alert("Please enter a message");
-            return;
-        }
-
-        const mentionMatch = message.match(/^@(\w+)\s+(.+)/);
-        if (!mentionMatch) {
-            alert("Message must start with @all or @username");
-            return;
-        }
-
-        const target = mentionMatch[1];
-        const content = mentionMatch[2];
-        let recipients = [];
-
-        if (target.toLowerCase() === "all") {
-            recipients = this.users.filter(user => user !== this.username);
-        } else {
-            if (!this.users.includes(target)) {
-                alert(`User ${target} not found`);
-                return;
-            }
-            recipients = [target];
-        }
-
-        const encryptedMessages = {};
-        for (const recipient of recipients) {
-            const pubKey = this.publicKeys.get(recipient);
-            if (!pubKey) {
-                this.ws.send(JSON.stringify({
-                    type: "get_public_key",
-                    username: recipient
-                }));
-                alert(`Public key for ${recipient} not found, requesting...`);
-                return;
-            }
-            encryptedMessages[recipient] = await this.encryptMessage(content, pubKey);
-        }
-
-        this.ws.send(JSON.stringify({
-            type: "message",
-            recipients: recipients,
-            encrypted_messages: encryptedMessages
-        }));
-        this.displayMessage(`You (to ${target})`, "[Encrypted]");
-        document.getElementById("message-input").value = "";
     }
 
     async sendConferenceMessage(confId) {
@@ -476,7 +414,8 @@ class SecureChat {
 
         document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
         document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-        document.getElementById("global-messages").classList.remove("active");
+        document.getElementById("conf-tab").classList.add("active");
+        document.querySelector(".tab-btn[data-tab='conf-tab']").classList.add("active");
         document.getElementById("conference-content").classList.add("active");
         this.renderConferences();
 
@@ -689,18 +628,6 @@ class SecureChat {
         if (this.currentConference) {
             this.showConference(this.currentConference);
         }
-    }
-
-    displayMessage(from, text) {
-        const messages = document.getElementById("messages");
-        const div = document.createElement("div");
-        div.className = from.startsWith("You") ? "sent" : "received";
-        div.innerHTML = `
-            ${from}: [Encrypted]
-            <div class="message-timestamp">${new Date().toLocaleTimeString()}</div>
-        `;
-        messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
     }
 }
 
