@@ -57,7 +57,13 @@ print("Master key initialized")
 # Инициализация базы данных
 def init_db():
     print("Initializing database...")
-    conn = sqlite3.connect("chat.db")
+    # Убедимся, что директория для chat.db существует
+    db_dir = os.path.dirname("/app/chat.db")
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir)
+        print(f"Created directory {db_dir}")
+    
+    conn = sqlite3.connect("/app/chat.db")
     c = conn.cursor()
     # Таблица пользователей
     c.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -126,7 +132,7 @@ async def handle_connection(websocket, path):
             if data["type"] == "login":
                 username = data["username"]
                 password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
                 user = c.fetchone()
@@ -157,7 +163,7 @@ async def handle_connection(websocket, path):
                     }))
                 if "pubkey" in data:
                     public_keys[data["username"]] = data["pubkey"]
-                    conn = sqlite3.connect("chat.db")
+                    conn = sqlite3.connect("/app/chat.db")
                     c = conn.cursor()
                     c.execute("UPDATE users SET pubkey = ? WHERE username = ?", (data["pubkey"], data["username"]))
                     conn.commit()
@@ -166,7 +172,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "create_conference":
                 conf_id = data["conf_id"]
                 members = data["members"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("DELETE FROM conferences WHERE conf_id = ?", (conf_id,))
                 for member in members:
@@ -194,7 +200,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "conference_message":
                 conf_id = data["conf_id"]
                 encrypted_messages = data["encrypted_messages"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -224,87 +230,8 @@ async def handle_connection(websocket, path):
                             "text": encrypted_messages.get(member, "[Encrypted]")
                         }))
 
-            elif data["type"] == "register_user":
-                if username not in connections or not is_admin(username):
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": "Only admins can register users"
-                    }))
-                    continue
-                new_user = data["username"]
-                password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                is_admin_user = data["is_admin"]
-                pubkey = data["pubkey"]
-                conn = sqlite3.connect("chat.db")
-                c = conn.cursor()
-                try:
-                    c.execute("INSERT INTO users (username, password_hash, is_admin, pubkey) VALUES (?, ?, ?, ?)",
-                              (new_user, password_hash, is_admin_user, pubkey))
-                    conn.commit()
-                    await websocket.send(json.dumps({
-                        "type": "register_success",
-                        "message": f"{new_user} registered successfully"
-                    }))
-                except sqlite3.IntegrityError:
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": f"User {new_user} already exists"
-                    }))
-                conn.close()
-                await broadcast_user_list()
-
-            elif data["type"] == "change_password":
-                if username not in connections or not is_admin(username):
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": "Only admins can change passwords"
-                    }))
-                    continue
-                target_user = data["username"]
-                new_password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("chat.db")
-                c = conn.cursor()
-                c.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, target_user))
-                if c.rowcount == 0:
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": f"User {target_user} not found"
-                    }))
-                else:
-                    await websocket.send(json.dumps({
-                        "type": "change_password_success",
-                        "message": f"Password changed for {target_user}"
-                    }))
-                conn.commit()
-                conn.close()
-
-            elif data["type"] == "delete_users":
-                if username not in connections or not is_admin(username):
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": "Only admins can delete users"
-                    }))
-                    continue
-                usernames = data["usernames"]
-                conn = sqlite3.connect("chat.db")
-                c = conn.cursor()
-                for user in usernames:
-                    c.execute("DELETE FROM users WHERE username = ?", (user,))
-                    c.execute("DELETE FROM conferences WHERE username = ?", (user,))
-                    if user in connections:
-                        del connections[user]
-                    if user in public_keys:
-                        del public_keys[user]
-                conn.commit()
-                conn.close()
-                await websocket.send(json.dumps({
-                    "type": "delete_user_success",
-                    "message": f"Deleted users: {', '.join(usernames)}"
-                }))
-                await broadcast_user_list()
-
             elif data["type"] == "get_conferences":
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT DISTINCT conf_id FROM conferences WHERE username = ?", (username,))
                 conf_ids = [row[0] for row in c.fetchall()]
@@ -321,7 +248,7 @@ async def handle_connection(websocket, path):
 
             elif data["type"] == "get_conference_messages":
                 conf_id = data["conf_id"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -360,7 +287,7 @@ async def handle_connection(websocket, path):
                 }))
 
             elif data["type"] == "get_all_users":
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT username FROM users")
                 users = [row[0] for row in c.fetchall()]
@@ -388,7 +315,7 @@ async def broadcast_user_list():
         }))
 
 def is_admin(username):
-    conn = sqlite3.connect("chat.db")
+    conn = sqlite3.connect("/app/chat.db")
     c = conn.cursor()
     c.execute("SELECT is_admin FROM users WHERE username = ?", (username,))
     result = c.fetchone()
