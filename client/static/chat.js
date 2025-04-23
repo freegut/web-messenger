@@ -1,12 +1,12 @@
 class SecureChat {
     constructor() {
         console.log("Initializing SecureChat");
-        this.ws = new WebSocket("ws://localhost:8765"); // Убрали /ws
+        this.ws = new WebSocket("ws://localhost:8765");
         this.ws.onopen = () => console.log("WebSocket connected");
         this.ws.onclose = () => {
             console.log("WebSocket disconnected");
             this.showLoginPrompt();
-            setTimeout(() => this.reconnect(), 3000); // Переподключение через 3 секунды
+            setTimeout(() => this.reconnect(), 3000);
         };
         this.ws.onerror = (e) => console.log("WebSocket error:", e);
         this.ws.onmessage = (e) => this.handleMessage(e);
@@ -19,10 +19,9 @@ class SecureChat {
         this.users = [];
         this.onlineUsers = [];
         this.currentConference = null;
-        this.selectedMembers = new Set();
         this.lastActivity = new Map();
         this.activityTimeouts = new Map();
-        
+
         this.showLoginPrompt();
         this.setupListeners();
         this.startActivityTracking();
@@ -30,7 +29,7 @@ class SecureChat {
 
     reconnect() {
         console.log("Attempting to reconnect...");
-        this.ws = new WebSocket("ws://localhost:8765"); // Убрали /ws
+        this.ws = new WebSocket("ws://localhost:8765");
         this.ws.onopen = () => console.log("WebSocket reconnected");
         this.ws.onclose = () => {
             console.log("WebSocket disconnected");
@@ -41,7 +40,7 @@ class SecureChat {
         this.ws.onmessage = (e) => this.handleMessage(e);
     }
 
-    async login() {
+    login() {
         this.username = document.getElementById("login-username").value.trim();
         const password = document.getElementById("login-password").value.trim();
         console.log("Login attempt:", this.username, password);
@@ -49,16 +48,17 @@ class SecureChat {
             alert("Please enter username and password");
             return;
         }
-        console.log("Sending login message");
         if (this.ws.readyState === WebSocket.OPEN) {
+            console.log("Sending login message");
             this.ws.send(JSON.stringify({
                 type: "login",
                 username: this.username,
                 password: password
             }));
         } else {
-            console.error("Cannot send message: WebSocket is not open. Current state:", this.ws.readyState);
+            console.log("WebSocket is not open, attempting to reconnect...");
             this.reconnect();
+            alert("Connection to server lost. Retrying...");
         }
     }
 
@@ -72,17 +72,16 @@ class SecureChat {
         this.lastActivity.clear();
         this.activityTimeouts.clear();
         this.currentConference = null;
-        this.selectedMembers.clear();
         localStorage.removeItem("session_token");
         this.ws.close();
-        this.reconnect(); // Переподключение после логаута
+        this.showLoginPrompt(true);
     }
 
     async handleMessage(event) {
         try {
             const data = JSON.parse(event.data);
             console.log("Received message:", data);
-            
+
             switch (data.type) {
                 case "login_success":
                     alert("Login successful!");
@@ -91,14 +90,6 @@ class SecureChat {
                     this.isAdmin = data.is_admin;
                     document.getElementById("login").style.display = "none";
                     document.getElementById("chat").style.display = "flex";
-                    document.getElementById("user-nick").textContent = this.username;
-                    if (this.isAdmin) {
-                        document.getElementById("tabs").style.display = "flex";
-                        document.getElementById("create-conf-btn-modal").style.display = "block";
-                        document.querySelectorAll(".tab-btn[data-tab='register-tab'], .tab-btn[data-tab='change-password-tab'], .tab-btn[data-tab='delete-tab']").forEach(btn => {
-                            btn.style.display = "block";
-                        });
-                    }
                     await this.generateKeys();
                     this.ws.send(JSON.stringify({
                         type: "get_public_key",
@@ -121,7 +112,6 @@ class SecureChat {
                     break;
                 case "all_users":
                     this.users = data.users;
-                    this.renderUserList();
                     break;
                 case "conference_update":
                     this.updateConference(data.conf_id, data.members);
@@ -132,21 +122,6 @@ class SecureChat {
                     break;
                 case "public_key":
                     this.publicKeys.set(data.username, data.pubkey);
-                    break;
-                case "register_success":
-                    alert(`User ${data.message}`);
-                    this.ws.send(JSON.stringify({
-                        type: "get_all_users"
-                    }));
-                    break;
-                case "change_password_success":
-                    alert(`Password changed: ${data.message}`);
-                    break;
-                case "delete_user_success":
-                    alert(`Users deleted: ${data.message}`);
-                    this.ws.send(JSON.stringify({
-                        type: "get_all_users"
-                    }));
                     break;
                 case "conference_list":
                     console.log("Received conference list:", data.conferences);
@@ -196,35 +171,26 @@ class SecureChat {
         }));
     }
 
-    showLoginPrompt() {
+    showLoginPrompt(forceReset = false) {
         document.getElementById("login").style.display = "block";
         document.getElementById("chat").style.display = "none";
-        document.getElementById("tabs").style.display = "none";
-        document.getElementById("create-conf-btn-modal").style.display = "none";
-        document.getElementById("login-username").value = "";
-        document.getElementById("login-password").value = "";
+        if (forceReset) {
+            document.getElementById("login-username").value = "";
+            document.getElementById("login-password").value = "";
+        }
     }
 
     setupListeners() {
         console.log("Setting up listeners");
         document.getElementById("login-btn").addEventListener("click", () => this.login());
-        document.getElementById("register-user-btn").addEventListener("click", () => this.registerUser());
-        document.getElementById("change-password-btn").addEventListener("click", () => this.changePassword());
-        document.getElementById("delete-selected-btn").addEventListener("click", () => this.deleteSelectedUsers());
         document.getElementById("logout-btn").addEventListener("click", () => this.logout());
 
-        document.querySelectorAll(".tab-btn").forEach(button => {
-            button.addEventListener("click", () => {
-                document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-                document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-                document.getElementById("conference-content").classList.remove("active");
-                
-                button.classList.add("active");
-                document.getElementById(button.dataset.tab).classList.add("active");
-                if (button.dataset.tab === "delete-tab") {
-                    this.renderUserList();
-                }
-            });
+        // Отладка ввода
+        document.getElementById("login-username").addEventListener("input", (e) => {
+            console.log("Username input:", e.target.value);
+        });
+        document.getElementById("login-password").addEventListener("input", (e) => {
+            console.log("Password input:", e.target.value);
         });
     }
 
@@ -281,129 +247,22 @@ class SecureChat {
         return Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    showCreateConferenceModal() {
-        this.selectedMembers.clear();
-        document.getElementById("new-conf-id").value = "";
-        const modal = document.getElementById("create-conference-modal");
-        modal.style.display = "flex";
-        this.renderNewConferenceMembersList();
-    }
-
-    showAddMembersModal() {
-        this.selectedMembers.clear();
-        const modal = document.getElementById("add-members-modal");
-        modal.style.display = "flex";
-        this.renderAddMembersList();
-    }
-
-    closeModal(modalId) {
-        document.getElementById(modalId).style.display = "none";
-        this.selectedMembers.clear();
-    }
-
-    renderNewConferenceMembersList() {
-        const membersList = document.getElementById("new-conf-members-list");
-        membersList.innerHTML = "";
-        this.users.forEach(user => {
-            if (user !== this.username) {
-                const memberDiv = document.createElement("div");
-                memberDiv.className = "member-item";
-                memberDiv.innerHTML = `
-                    <input type="checkbox" id="new-member-${user}" value="${user}">
-                    <label for="new-member-${user}">${user}</label>
-                `;
-                memberDiv.querySelector("input").addEventListener("change", (e) => {
-                    if (e.target.checked) {
-                        this.selectedMembers.add(user);
-                    } else {
-                        this.selectedMembers.delete(user);
-                    }
-                });
-                membersList.appendChild(memberDiv);
-            }
-        });
-    }
-
-    renderAddMembersList() {
-        const membersList = document.getElementById("add-members-list");
-        membersList.innerHTML = "";
-        const conf = this.conferences.get(this.currentConference);
-        this.users.forEach(user => {
-            if (user !== this.username && !conf.members.includes(user)) {
-                const memberDiv = document.createElement("div");
-                memberDiv.className = "member-item";
-                memberDiv.innerHTML = `
-                    <input type="checkbox" id="add-member-${user}" value="${user}">
-                    <label for="add-member-${user}">${user}</label>
-                `;
-                memberDiv.querySelector("input").addEventListener("change", (e) => {
-                    if (e.target.checked) {
-                        this.selectedMembers.add(user);
-                    } else {
-                        this.selectedMembers.delete(user);
-                    }
-                });
-                membersList.appendChild(memberDiv);
-            }
-        });
-    }
-
-    async createConference() {
-        if (!this.isAdmin) {
-            alert("Only admins can create conferences");
-            return;
-        }
-        const confId = document.getElementById("new-conf-id").value.trim();
-        const members = Array.from(this.selectedMembers);
-        if (!confId || members.length === 0) {
-            alert("Please enter conference ID and select members");
-            return;
-        }
-        console.log("Creating conference:", confId, members);
-        this.ws.send(JSON.stringify({
-            type: "create_conference",
-            conf_id: confId,
-            members: members
-        }));
-        this.closeModal("create-conference-modal");
-    }
-
-    async addMembersToConference() {
-        if (!this.isAdmin) {
-            alert("Only admins can add members to conferences");
-            return;
-        }
-        const confId = this.currentConference;
-        const conf = this.conferences.get(confId);
-        const newMembers = Array.from(this.selectedMembers);
-        if (newMembers.length === 0) {
-            alert("Please select members to add");
-            return;
-        }
-        const updatedMembers = [...new Set([...conf.members, ...newMembers])];
-        console.log("Adding members to conference:", confId, newMembers);
-        this.ws.send(JSON.stringify({
-            type: "create_conference",
-            conf_id: confId,
-            members: updatedMembers
-        }));
-        this.closeModal("add-members-modal");
-    }
-
     updateConference(confId, members) {
         console.log("Updating conference:", confId, members);
         this.conferences.set(confId, { members, messages: this.conferences.get(confId)?.messages || [] });
         console.log("Updated conferences map:", this.conferences);
         this.renderConferences();
-        this.currentConference = confId;
-        this.showConference(confId);
+        if (!this.currentConference) {
+            this.currentConference = confId;
+            this.showConference(confId);
+        }
     }
 
     renderConferences() {
-        const conferenceList = document.getElementById("conferences-list");
+        const conferenceList = document.getElementById("conference-list");
         conferenceList.innerHTML = "";
         this.conferences.forEach((conf, confId) => {
-            const confDiv = document.createElement("div");
+            const confDiv = document.createElement("button");
             confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
             confDiv.textContent = confId;
             confDiv.addEventListener("click", () => {
@@ -419,11 +278,6 @@ class SecureChat {
         console.log("Showing conference:", confId);
         console.log("Conferences map:", this.conferences);
 
-        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-        document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-        document.getElementById("conference-content").classList.add("active");
-        this.renderConferences();
-
         const conf = this.conferences.get(confId);
         console.log("Conference data:", conf);
         if (!conf) {
@@ -435,18 +289,14 @@ class SecureChat {
         const safeConfId = encodeURIComponent(confId);
         const confContent = document.getElementById("conference-content");
         confContent.innerHTML = `
-            <h3>${confId}</h3>
-            <button onclick="chat.showAddMembersModal()" style="${this.isAdmin ? '' : 'display: none;'}">Add Members</button>
-            <div class="members-list" id="conf-members-${safeConfId}"></div>
-            <div class="messages" id="conf-messages-${safeConfId}"></div>
+            <div class="conference-messages" id="conf-messages-${safeConfId}"></div>
             <div class="conference-input-container">
                 <input id="conf-message-input-${safeConfId}" placeholder="Type your message...">
                 <button onclick="chat.sendConferenceMessage('${confId}')">Send</button>
             </div>
         `;
+        confContent.classList.add("active");
         console.log("Conference content HTML set:", confContent.innerHTML);
-        console.log("Rendering members for:", confId, conf.members);
-        this.renderConferenceMembers(confId, conf.members);
 
         console.log("Rendering messages for:", confId, conf.messages);
         this.renderConferenceMessages(confId, conf.messages);
@@ -458,21 +308,34 @@ class SecureChat {
         }));
     }
 
-    renderConferenceMembers(confId, members) {
+    renderConferenceMessages(confId, messages) {
         const safeConfId = encodeURIComponent(confId);
-        const membersList = document.getElementById(`conf-members-${safeConfId}`);
-        membersList.innerHTML = "";
-        members.forEach(member => {
-            const memberDiv = document.createElement("div");
-            memberDiv.className = "member-item";
-            const status = this.getUserStatus(member);
-            memberDiv.innerHTML = `
-                <span class="online-status ${status}"></span>
-                ${member}
+        const messagesDiv = document.getElementById(`conf-messages-${safeConfId}`);
+        if (!messagesDiv) {
+            console.error("Messages div not found for conference:", confId);
+            return;
+        }
+        messagesDiv.innerHTML = "";
+        (messages || []).forEach(msg => {
+            const msgDiv = document.createElement("div");
+            msgDiv.className = msg.from === "You" ? "sent" : "received";
+            msgDiv.innerHTML = `
+                ${msg.from}: ${msg.text}
+                <div class="message-timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</div>
             `;
-            membersList.appendChild(memberDiv);
+            messagesDiv.appendChild(msgDiv);
         });
-        console.log("Members list HTML:", membersList.innerHTML);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        console.log("Messages div HTML:", messagesDiv.innerHTML);
+    }
+
+    displayConferenceMessage(confId, from, text) {
+        const conf = this.conferences.get(confId);
+        if (!conf) return;
+        conf.messages.push({ from, text, timestamp: Date.now() });
+        if (this.currentConference === confId) {
+            this.showConference(confId);
+        }
     }
 
     getUserStatus(user) {
@@ -486,7 +349,7 @@ class SecureChat {
 
     updateLastActivity(user) {
         this.lastActivity.set(user, Date.now());
-        
+
         if (this.activityTimeouts.has(user)) {
             clearTimeout(this.activityTimeouts.get(user));
         }
@@ -515,97 +378,6 @@ class SecureChat {
                 }
             });
         }, 60 * 1000);
-    }
-
-    renderConferenceMessages(confId, messages) {
-        const safeConfId = encodeURIComponent(confId);
-        const messagesDiv = document.getElementById(`conf-messages-${safeConfId}`);
-        messagesDiv.innerHTML = "";
-        messages.forEach(msg => {
-            const msgDiv = document.createElement("div");
-            msgDiv.className = msg.from === "You" ? "sent" : "received";
-            msgDiv.innerHTML = `
-                ${msg.from}: ${msg.text}
-                <div class="message-timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</div>
-            `;
-            messagesDiv.appendChild(msgDiv);
-        });
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        console.log("Messages div HTML:", messagesDiv.innerHTML);
-    }
-
-    displayConferenceMessage(confId, from, text) {
-        const conf = this.conferences.get(confId);
-        if (!conf) return;
-        conf.messages.push({ from, text, timestamp: Date.now() });
-        if (this.currentConference === confId) {
-            this.showConference(confId);
-        }
-    }
-
-    async registerUser() {
-        const username = document.getElementById("register-username").value.trim();
-        const password = document.getElementById("register-password").value.trim();
-        const isAdmin = document.getElementById("register-is-admin").checked;
-        if (!username || !password) {
-            alert("Please enter username and password");
-            return;
-        }
-        this.ws.send(JSON.stringify({
-            type: "register_user",
-            username: username,
-            password: password,
-            is_admin: isAdmin,
-            pubkey: "{}"
-        }));
-        document.getElementById("register-username").value = "";
-        document.getElementById("register-password").value = "";
-        document.getElementById("register-is-admin").checked = false;
-    }
-
-    async changePassword() {
-        const username = document.getElementById("change-password-username").value.trim();
-        const password = document.getElementById("change-password-new").value.trim();
-        if (!username || !password) {
-            alert("Please enter username and new password");
-            return;
-        }
-        this.ws.send(JSON.stringify({
-            type: "change_password",
-            username: username,
-            password: password
-        }));
-        document.getElementById("change-password-username").value = "";
-        document.getElementById("change-password-new").value = "";
-    }
-
-    renderUserList() {
-        const userList = document.getElementById("delete-users-list");
-        userList.innerHTML = "";
-        this.users.forEach(user => {
-            if (user !== this.username) {
-                const userDiv = document.createElement("div");
-                userDiv.className = "user-item";
-                userDiv.innerHTML = `
-                    <input type="checkbox" id="user-${user}" value="${user}">
-                    <label for="user-${user}">${user}</label>
-                `;
-                userList.appendChild(userDiv);
-            }
-        });
-    }
-
-    async deleteSelectedUsers() {
-        const selectedUsers = Array.from(document.querySelectorAll('#delete-users-list input[type="checkbox"]:checked'))
-            .map(checkbox => checkbox.value);
-        if (selectedUsers.length === 0) {
-            alert("Please select at least one user to delete");
-            return;
-        }
-        this.ws.send(JSON.stringify({
-            type: "delete_users",
-            usernames: selectedUsers
-        }));
     }
 
     updateUserList(users) {

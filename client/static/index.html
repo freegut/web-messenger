@@ -3,85 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Chat</title>
+    <title>R4 Chat</title>
     <link rel="stylesheet" href="style.css">
     <script src="chat.js" defer></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
     <div id="login">
-        <h2>Login</h2>
-        <input id="login-username" placeholder="Username">
-        <input id="login-password" type="password" placeholder="Password">
-        <button id="login-btn">Login</button>
+        <h1>Forum Chat</h1>
+        <input id="login-username" placeholder="Username" autocomplete="off">
+        <input id="login-password" type="password" placeholder="Password" autocomplete="off">
+        <button id="login-btn">Log In</button>
     </div>
 
     <div id="chat" style="display: none;">
-        <div class="sidebar">
-            <div class="chat-header">
-                <h2>Secure Chat</h2>
-                <button id="logout-btn" class="logout-btn">Logout</button>
-            </div>
-            <h3 id="user-nick"></h3>
-            <div id="tabs">
-                <button class="tab-btn active" data-tab="conf-tab"><i class="fas fa-users"></i> Conferences</button>
-                <button class="tab-btn" data-tab="register-tab" style="display: none;"><i class="fas fa-user-plus"></i> Register User</button>
-                <button class="tab-btn" data-tab="change-password-tab" style="display: none;"><i class="fas fa-key"></i> Change Password</button>
-                <button class="tab-btn" data-tab="delete-tab" style="display: none;"><i class="fas fa-trash"></i> Delete Users</button>
-            </div>
-            <button id="create-conf-btn-modal" onclick="chat.showCreateConferenceModal()" style="display: none;">Create Conference</button>
-
-            <div id="conf-tab" class="tab-pane active conference-section">
-                <div class="conference-search">
-                    <input id="conf-search" placeholder="Search conferences..." oninput="chat.searchConferences()">
-                    <button onclick="chat.searchConferences()"><i class="fas fa-search"></i> Search</button>
+        <div class="container">
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h2>Conferences</h2>
+                    <button id="logout-btn">Log Out</button>
                 </div>
                 <div id="conference-list"></div>
             </div>
-
-            <div id="register-tab" class="tab-pane">
-                <h3>Register User</h3>
-                <input id="admin-reg-username" placeholder="Username">
-                <input id="admin-reg-password" type="password" placeholder="Password">
-                <label><input type="checkbox" id="admin-reg-is-admin"> Is Admin</label>
-                <button id="register-user-btn">Register</button>
+            <div class="main-content">
+                <div id="conference-content" class="message-area"></div>
             </div>
-
-            <div id="change-password-tab" class="tab-pane">
-                <h3>Change Password</h3>
-                <input id="admin-change-username" placeholder="Username">
-                <input id="admin-change-password" type="password" placeholder="New Password">
-                <button id="change-password-btn">Change Password</button>
-            </div>
-
-            <div id="delete-tab" class="tab-pane">
-                <h3>Delete Users</h3>
-                <div id="user-list"></div>
-                <button id="delete-selected-btn">Delete Selected</button>
-            </div>
-        </div>
-
-        <div class="main-content">
-            <div id="conference-content" class="message-area"></div>
-        </div>
-    </div>
-
-    <div id="create-conference-modal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <span class="close-btn" onclick="chat.closeModal('create-conference-modal')">&times;</span>
-            <h3>Create Conference</h3>
-            <input id="new-conf-id" placeholder="Conference ID">
-            <div id="new-conf-members-list" class="members-list"></div>
-            <button onclick="chat.createConference()">Create</button>
-        </div>
-    </div>
-
-    <div id="add-members-modal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <span class="close-btn" onclick="chat.closeModal('add-members-modal')">&times;</span>
-            <h3>Add Members</h3>
-            <div id="add-members-list" class="members-list"></div>
-            <button onclick="chat.addMembersToConference()">Add</button>
         </div>
     </div>
 </body>

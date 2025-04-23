@@ -1,202 +1,128 @@
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background-color: #f0f2f5;
+    font-family: "Courier New", Courier, monospace;
+    background-color: #f5f5f5;
     margin: 0;
     padding: 0;
     display: flex;
     justify-content: center;
     align-items: center;
     min-height: 100vh;
+    color: #333;
 }
 
 #login {
-    background: white;
+    background: #fff;
     padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    max-width: 400px;
+    max-width: 300px;
     width: 100%;
+    text-align: center;
+}
+
+#login h1 {
+    font-size: 24px;
+    margin: 0 0 20px 0;
+    color: #333;
+}
+
+#login input {
+    display: block;
+    width: 100%;
+    padding: 8px;
+    margin: 8px 0;
+    border: 1px solid #ccc;
+    background: #fafafa;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
+}
+
+#login button {
+    width: 100%;
+    padding: 8px;
+    background: #333;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
 }
 
 #chat {
     width: 100%;
     height: 100vh;
     display: flex;
-    flex-direction: column;
 }
 
-.chat-container {
+.container {
     display: flex;
-    flex: 1;
+    width: 100%;
     height: 100%;
 }
 
 .sidebar {
-    width: 300px;
-    background: #2f3136;
-    color: white;
-    padding: 20px;
+    width: 200px;
+    background: #e5e5e5;
+    padding: 10px;
+    border-right: 1px solid #ccc;
     overflow-y: auto;
-    border-right: 1px solid #ddd;
 }
 
-.chat-header {
+.sidebar-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 10px;
 }
 
-.chat-header h2 {
-    color: white;
-    margin: 0;
-    font-size: 20px;
-}
-
-h3 {
-    color: #b9bbbe;
-    margin: 20px 0 10px 0;
+.sidebar-header h2 {
     font-size: 16px;
-    text-transform: uppercase;
+    margin: 0;
+    color: #333;
 }
 
-input, select, button {
-    padding: 10px;
-    margin: 5px 0;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    font-size: 14px;
-    box-sizing: border-box;
-}
-
-input, select {
-    width: 100%;
-}
-
-button {
-    background-color: #5865f2;
-    color: white;
-    border: none;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #4752c4;
-}
-
-.logout-btn {
-    background-color: #dc3545;
-    padding: 8px 16px;
-    border-radius: 6px;
-}
-
-.logout-btn:hover {
-    background-color: #c82333;
-}
-
-#tabs {
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 20px;
-}
-
-.tab-btn {
+#logout-btn {
     background: none;
     border: none;
-    padding: 10px;
-    font-size: 14px;
-    color: #b9bbbe;
-    text-align: left;
+    color: #666;
     cursor: pointer;
-    transition: color 0.3s;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 12px;
 }
 
-.tab-btn i {
-    margin-right: 8px;
-}
-
-.tab-btn:hover {
-    color: white;
-}
-
-.tab-btn.active {
-    color: white;
-    background: #40444b;
-    border-radius: 4px;
-}
-
-.tab-pane {
-    display: none;
-}
-
-.tab-pane.active {
-    display: block;
-    animation: fadeIn 0.3s ease-in;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-.conference-section {
-    flex: 1;
-}
-
-.conference-search {
-    display: flex;
-    align-items: center;
-    margin-bottom: 15px;
-}
-
-.conference-search input {
-    flex: 1;
-    background: #202225;
-    border: none;
-    color: white;
-}
-
-.conference-search button {
-    margin-left: 5px;
-    background: #5865f2;
-    padding: 8px;
-}
-
-.conference-search button:hover {
-    background: #4752c4;
+#logout-btn:hover {
+    color: #333;
 }
 
 #conference-list {
-    max-height: 400px;
-    overflow-y: auto;
+    margin-top: 10px;
 }
 
 .conference-item {
-    padding: 10px;
-    margin: 5px 0;
-    background: #36393f;
-    border-radius: 4px;
+    padding: 5px;
+    margin: 2px 0;
+    background: none;
+    border: none;
+    text-align: left;
+    width: 100%;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
+    color: #333;
     cursor: pointer;
-    transition: background 0.3s;
 }
 
 .conference-item:hover {
-    background: #40444b;
+    background: #d5d5d5;
 }
 
 .conference-item.active {
-    background: #5865f2;
-    color: white;
+    background: #333;
+    color: #fff;
 }
 
 .main-content {
     flex: 1;
-    background: white;
-    padding: 20px;
+    background: #fff;
+    padding: 10px;
     overflow-y: auto;
-    position: relative;
-    min-height: 500px; /* Добавлено для отладки */
 }
 
 .message-area {
@@ -206,177 +132,61 @@ button:hover {
 }
 
 .message-area.active {
-    display: flex !important; /* Усиление приоритета для отладки */
-}
-
-#conference-content {
-    border: 2px solid red; /* Временный стиль для отладки */
-    background: #f0f0f0; /* Временный фон для отладки */
+    display: flex;
 }
 
 .conference-messages {
     flex: 1;
-    max-height: 70vh;
     overflow-y: auto;
-    border: 1px solid #ddd;
     padding: 10px;
-    margin-bottom: 20px;
-    background: #fafafa;
-    border-radius: 6px;
 }
 
-.message-content div, .conference-messages div {
-    padding: 8px 12px;
+.conference-messages div {
+    padding: 5px 10px;
     margin: 5px 0;
-    border-radius: 6px;
-    position: relative;
+    font-size: 14px;
+    line-height: 1.4;
 }
 
-.message-content div.sent, .conference-messages div.sent {
-    background-color: #007bff;
-    color: white;
+.conference-messages div.sent {
     text-align: right;
-    margin-left: 20%;
+    color: #333;
 }
 
-.message-content div.received, .conference-messages div.received {
-    background-color: #e9ecef;
+.conference-messages div.received {
     text-align: left;
-    margin-right: 20%;
+    color: #666;
 }
 
 .message-timestamp {
-    font-size: 12px;
-    color: #888;
-    margin-top: 4px;
+    font-size: 10px;
+    color: #999;
+    margin-top: 2px;
     text-align: right;
 }
 
-.message-input-container, .conference-input-container {
+.conference-input-container {
     display: flex;
-    gap: 10px;
+    gap: 5px;
     align-items: center;
+    margin-top: 10px;
 }
 
-.message-input-container input, .conference-input-container input {
+.conference-input-container input {
     flex: 1;
-}
-
-.message-input-container button, .conference-input-container button {
-    padding: 10px;
-}
-
-#user-list {
-    max-height: 300px;
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    padding: 10px;
-    margin-bottom: 20px;
+    padding: 5px;
+    border: 1px solid #ccc;
     background: #fafafa;
-    border-radius: 6px;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
 }
 
-.user-item {
-    display: flex;
-    align-items: center;
-    padding: 8px;
-    border-bottom: 1px solid #eee;
-}
-
-.user-item:last-child {
-    border-bottom: none;
-}
-
-.user-item input[type="checkbox"] {
-    margin-right: 10px;
-}
-
-#delete-selected-btn {
-    background-color: #dc3545;
-}
-
-#delete-selected-btn:hover {
-    background-color: #c82333;
-}
-
-label {
-    margin: 10px 0;
-    display: flex;
-    align-items: center;
-}
-
-input[type="checkbox"] {
-    width: auto;
-    margin-right: 10px;
-}
-
-.modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.modal-content {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    max-width: 400px;
-    width: 100%;
-    position: relative;
-}
-
-.close-btn {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    font-size: 20px;
+.conference-input-container button {
+    padding: 5px 10px;
+    background: #333;
+    color: #fff;
+    border: none;
     cursor: pointer;
-}
-
-.members-list {
-    max-height: 150px;
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    padding: 10px;
-    margin-bottom: 20px;
-    background: #fafafa;
-    border-radius: 6px;
-}
-
-.member-item {
-    display: flex;
-    align-items: center;
-    padding: 8px;
-    border-bottom: 1px solid #eee;
-}
-
-.member-item:last-child {
-    border-bottom: none;
-}
-
-.online-status {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-right: 8px;
-}
-
-.online-status.online {
-    background-color: #43b581;
-}
-
-.online-status.inactive {
-    background-color: #f1c40f;
-}
-
-.online-status.offline {
-    background-color: #dc3545;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
 }
