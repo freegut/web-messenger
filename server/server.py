@@ -6,20 +6,44 @@ import hashlib
 import base64
 import os
 import datetime
+import shutil
 from cryptography.fernet import Fernet
 
 print("Starting server...")
 
 # Получаем мастер-ключ из переменной окружения или файла
-MASTER_KEY_PATH = "/app/master_key.txt"
+MASTER_KEY_DIR = "/app/master_key"
+MASTER_KEY_PATH = os.path.join(MASTER_KEY_DIR, "master_key.txt")
 MASTER_KEY = os.getenv("MASTER_KEY")
+
+# Создаём директорию, если она не существует
+if not os.path.exists(MASTER_KEY_DIR):
+    os.makedirs(MASTER_KEY_DIR)
+    print(f"Created directory {MASTER_KEY_DIR}")
+
+print(f"Checking if {MASTER_KEY_PATH} exists: {os.path.exists(MASTER_KEY_PATH)}")
+print(f"Is {MASTER_KEY_PATH} a file? {os.path.isfile(MASTER_KEY_PATH)}")
+print(f"Is {MASTER_KEY_PATH} a directory? {os.path.isdir(MASTER_KEY_PATH)}")
 
 if not MASTER_KEY:
     print("MASTER_KEY not set in environment, checking file...")
+    # Если путь существует и это директория, удаляем её
+    if os.path.exists(MASTER_KEY_PATH) and os.path.isdir(MASTER_KEY_PATH):
+        print(f"{MASTER_KEY_PATH} is a directory, removing it...")
+        shutil.rmtree(MASTER_KEY_PATH)
+    
+    # Проверяем файл
     try:
         with open(MASTER_KEY_PATH, "r") as f:
             MASTER_KEY = f.read().strip()
         print("MASTER_KEY loaded from file")
+        # Если файл пустой, генерируем новый ключ
+        if not MASTER_KEY:
+            print("MASTER_KEY file is empty, generating a new one...")
+            MASTER_KEY = Fernet.generate_key().decode()
+            with open(MASTER_KEY_PATH, "w") as f:
+                f.write(MASTER_KEY)
+            print(f"New MASTER_KEY generated and saved to {MASTER_KEY_PATH}")
     except FileNotFoundError:
         print("MASTER_KEY file not found, generating a new one...")
         MASTER_KEY = Fernet.generate_key().decode()

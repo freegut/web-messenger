@@ -7,7 +7,7 @@ services:
       - "8765:8765"
     volumes:
       - ./server/chat.db:/app/chat.db
-      - ./server/master_key.txt:/app/master_key.txt
+      - master-key-volume:/app/master_key
     networks:
       - chat-network
 
@@ -28,3 +28,6 @@ services:
 networks:
   chat-network:
     driver: bridge
+
+volumes:
+  master-key-volume:
