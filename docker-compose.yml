@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   server:
     build: ./server
     ports:
       - "8765:8765"
     volumes:
-      - ./server/chat.db:/app/chat.db
+      - chat-db-volume:/app/chat.db
       - master-key-volume:/app/master_key
     networks:
       - chat-network
@@ -17,6 +15,7 @@ services:
       - "8000:80"
     depends_on:
       - server
+    command: sh -c "sleep 5 && nginx -g 'daemon off;'"  # Задержка 5 секунд перед запуском nginx
     networks:
       - chat-network
 
@@ -31,3 +30,4 @@ networks:
 
 volumes:
   master-key-volume:
+  chat-db-volume:
