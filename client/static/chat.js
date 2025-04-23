@@ -1,15 +1,10 @@
 class SecureChat {
     constructor() {
         console.log("Initializing SecureChat");
-        this.ws = new WebSocket("ws://localhost:8765");
-        this.ws.onopen = () => console.log("WebSocket connected");
-        this.ws.onclose = () => {
-            console.log("WebSocket disconnected");
-            this.showLoginPrompt();
-            setTimeout(() => this.reconnect(), 3000);
-        };
-        this.ws.onerror = (e) => console.log("WebSocket error:", e);
-        this.ws.onmessage = (e) => this.handleMessage(e);
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectInterval = 3000;
         this.username = null;
         this.keyPair = null;
         this.publicKeys = new Map();
@@ -19,28 +14,42 @@ class SecureChat {
         this.users = [];
         this.onlineUsers = [];
         this.currentConference = null;
+        this.selectedMembers = new Set();
         this.lastActivity = new Map();
         this.activityTimeouts = new Map();
 
-        this.showLoginPrompt();
+        this.connectWebSocket();
+        this.showLoginPrompt(true);
         this.setupListeners();
         this.startActivityTracking();
     }
 
-    reconnect() {
-        console.log("Attempting to reconnect...");
+    connectWebSocket() {
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            alert("Unable to connect to the server after multiple attempts. Please check if the server is running and try again later.");
+            console.error("Max reconnect attempts reached. Stopping reconnection.");
+            return;
+        }
+
+        console.log("Attempting to connect WebSocket...");
         this.ws = new WebSocket("ws://localhost:8765");
-        this.ws.onopen = () => console.log("WebSocket reconnected");
+        this.ws.onopen = () => {
+            console.log("WebSocket connected");
+            this.reconnectAttempts = 0; // Сбрасываем счётчик попыток
+        };
         this.ws.onclose = () => {
             console.log("WebSocket disconnected");
             this.showLoginPrompt();
-            setTimeout(() => this.reconnect(), 3000);
+            this.reconnectAttempts++;
+            setTimeout(() => this.connectWebSocket(), this.reconnectInterval);
         };
-        this.ws.onerror = (e) => console.log("WebSocket error:", e);
+        this.ws.onerror = (e) => {
+            console.log("WebSocket error:", e);
+        };
         this.ws.onmessage = (e) => this.handleMessage(e);
     }
 
-    login() {
+    async login() {
         this.username = document.getElementById("login-username").value.trim();
         const password = document.getElementById("login-password").value.trim();
         console.log("Login attempt:", this.username, password);
@@ -56,9 +65,8 @@ class SecureChat {
                 password: password
             }));
         } else {
-            console.log("WebSocket is not open, attempting to reconnect...");
-            this.reconnect();
-            alert("Connection to server lost. Retrying...");
+            console.log("WebSocket is not open, waiting for reconnection...");
+            alert("Cannot connect to the server. Retrying...");
         }
     }
 
@@ -72,7 +80,9 @@ class SecureChat {
         this.lastActivity.clear();
         this.activityTimeouts.clear();
         this.currentConference = null;
+        this.selectedMembers.clear();
         localStorage.removeItem("session_token");
+        this.reconnectAttempts = 0; // Сбрасываем попытки переподключения
         this.ws.close();
         this.showLoginPrompt(true);
     }
@@ -184,14 +194,6 @@ class SecureChat {
         console.log("Setting up listeners");
         document.getElementById("login-btn").addEventListener("click", () => this.login());
         document.getElementById("logout-btn").addEventListener("click", () => this.logout());
-
-        // Отладка ввода
-        document.getElementById("login-username").addEventListener("input", (e) => {
-            console.log("Username input:", e.target.value);
-        });
-        document.getElementById("login-password").addEventListener("input", (e) => {
-            console.log("Password input:", e.target.value);
-        });
     }
 
     async sendConferenceMessage(confId) {
@@ -301,7 +303,6 @@ class SecureChat {
         console.log("Rendering messages for:", confId, conf.messages);
         this.renderConferenceMessages(confId, conf.messages);
 
-        // Запрашиваем историю сообщений с сервера
         this.ws.send(JSON.stringify({
             type: "get_conference_messages",
             conf_id: confId
