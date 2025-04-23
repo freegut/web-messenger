@@ -1,4 +1,3 @@
-
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background-color: #f0f2f5;
@@ -197,6 +196,7 @@ button:hover {
     padding: 20px;
     overflow-y: auto;
     position: relative;
+    min-height: 500px; /* Добавлено для отладки */
 }
 
 .message-area {
@@ -206,10 +206,15 @@ button:hover {
 }
 
 .message-area.active {
-    display: flex;
+    display: flex !important; /* Усиление приоритета для отладки */
 }
 
-.message-content, .conference-messages {
+#conference-content {
+    border: 2px solid red; /* Временный стиль для отладки */
+    background: #f0f0f0; /* Временный фон для отладки */
+}
+
+.conference-messages {
     flex: 1;
     max-height: 70vh;
     overflow-y: auto;
@@ -305,33 +310,35 @@ input[type="checkbox"] {
     margin-right: 10px;
 }
 
-.dropdown {
-    position: relative;
-    margin: 5px 0;
-}
-
-.dropdown-content {
-    position: absolute;
-    top: 100%;
+.modal {
+    position: fixed;
+    top: 0;
     left: 0;
-    background: #36393f;
-    border-radius: 6px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-    z-index: 1000;
-    max-height: 200px;
-    overflow-y: auto;
     width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
 }
 
-.dropdown-content label {
-    display: block;
-    padding: 8px 12px;
-    color: white;
+.modal-content {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
+    width: 100%;
+    position: relative;
+}
+
+.close-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 20px;
     cursor: pointer;
-}
-
-.dropdown-content label:hover {
-    background: #40444b;
 }
 
 .members-list {
@@ -366,6 +373,10 @@ input[type="checkbox"] {
     background-color: #43b581;
 }
 
+.online-status.inactive {
+    background-color: #f1c40f;
+}
+
 .online-status.offline {
-    background-color: #747f8d;
+    background-color: #dc3545;
 }

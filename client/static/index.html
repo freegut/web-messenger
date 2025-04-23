@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -32,14 +31,7 @@
                         <input id="conf-search" placeholder="Search conferences...">
                         <button onclick="chat.searchConferences()"><i class="fas fa-search"></i></button>
                     </div>
-                    <div id="create-conference" style="display: none;">
-                        <input id="conf-id" placeholder="Conference ID">
-                        <div class="dropdown">
-                            <button id="add-members-btn" onclick="chat.toggleMemberDropdown(event)">Add Members</button>
-                            <div id="member-dropdown" class="dropdown-content" style="display: none;"></div>
-                        </div>
-                        <button id="create-conf-btn">Create</button>
-                    </div>
+                    <button id="create-conf-btn-modal" style="display: none;" onclick="chat.showCreateConferenceModal()">Create Conference</button>
                     <div id="conference-list"></div>
                 </div>
             </div>
@@ -76,6 +68,28 @@
             </div>
         </div>
     </div>
+
+    <!-- Модальное окно для создания конференции -->
+    <div id="create-conference-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-btn" onclick="chat.closeModal('create-conference-modal')">&times;</span>
+            <h3>Create Conference</h3>
+            <input id="new-conf-id" placeholder="Conference ID">
+            <div class="members-list" id="new-conf-members-list"></div>
+            <button onclick="chat.createConference()">Create</button>
+        </div>
+    </div>
+
+    <!-- Модальное окно для добавления участников -->
+    <div id="add-members-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-btn" onclick="chat.closeModal('add-members-modal')">&times;</span>
+            <h3>Add Members</h3>
+            <div class="members-list" id="add-members-list"></div>
+            <button onclick="chat.addMembersToConference()">Add</button>
+        </div>
+    </div>
+
     <script src="chat.js"></script>
 </body>
 </html>

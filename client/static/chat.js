@@ -1,4 +1,3 @@
-
 class SecureChat {
     constructor() {
         console.log("Initializing SecureChat");
@@ -11,14 +10,17 @@ class SecureChat {
         this.publicKeys = new Map();
         this.sessionToken = localStorage.getItem("session_token");
         this.isAdmin = false;
-        this.conferences = new Map(); // {confId: {members: [], messages: []}}
-        this.users = []; // Список всех пользователей
-        this.onlineUsers = []; // Список онлайн-пользователей
-        this.currentConference = null; // Текущая открытая конференция
-        this.selectedMembers = new Set(); // Выбранные участники для конференции
+        this.conferences = new Map();
+        this.users = [];
+        this.onlineUsers = [];
+        this.currentConference = null;
+        this.selectedMembers = new Set();
+        this.lastActivity = new Map();
+        this.activityTimeouts = new Map();
         
         this.showLoginPrompt();
         this.setupListeners();
+        this.startActivityTracking();
     }
 
     async handleMessage(event) {
@@ -36,7 +38,7 @@ class SecureChat {
                 document.getElementById("user-nick").textContent = this.username;
                 if (this.isAdmin) {
                     document.getElementById("tabs").style.display = "flex";
-                    document.getElementById("create-conference").style.display = "block";
+                    document.getElementById("create-conf-btn-modal").style.display = "block";
                 }
                 await this.generateKeys();
                 this.ws.send(JSON.stringify({
@@ -46,7 +48,11 @@ class SecureChat {
                 this.ws.send(JSON.stringify({
                     type: "get_all_users"
                 }));
+                this.ws.send(JSON.stringify({
+                    type: "get_conferences"
+                }));
                 this.showGlobalChat();
+                this.updateLastActivity(this.username);
                 break;
             case "error":
                 alert(`Error: ${data.message}`);
@@ -60,12 +66,14 @@ class SecureChat {
                 break;
             case "message":
                 this.displayMessage(data.from, data.text);
+                this.updateLastActivity(data.from);
                 break;
             case "conference_update":
                 this.updateConference(data.conf_id, data.members);
                 break;
             case "conference_message":
                 this.displayConferenceMessage(data.conf_id, data.from, data.text);
+                this.updateLastActivity(data.from);
                 break;
             case "public_key":
                 this.publicKeys.set(data.username, data.pubkey);
@@ -84,6 +92,27 @@ class SecureChat {
                 this.ws.send(JSON.stringify({
                     type: "get_all_users"
                 }));
+                break;
+            case "conference_list":
+                console.log("Received conference list:", data.conferences);
+                Object.entries(data.conferences).forEach(([confId, members]) => {
+                    this.conferences.set(confId, { members, messages: this.conferences.get(confId)?.messages || [] });
+                });
+                this.renderConferences();
+                break;
+            case "conference_messages":
+                console.log("Received conference messages:", data);
+                const conf = this.conferences.get(data.conf_id);
+                if (conf) {
+                    conf.messages = data.messages.map(msg => ({
+                        from: msg.from,
+                        text: msg.text,
+                        timestamp: new Date(msg.timestamp).getTime()
+                    }));
+                    if (this.currentConference === data.conf_id) {
+                        this.showConference(data.conf_id);
+                    }
+                }
                 break;
         }
     }
@@ -111,7 +140,7 @@ class SecureChat {
         document.getElementById("login").style.display = "block";
         document.getElementById("chat").style.display = "none";
         document.getElementById("tabs").style.display = "none";
-        document.getElementById("create-conference").style.display = "none";
+        document.getElementById("create-conf-btn-modal").style.display = "none";
         document.getElementById("login-username").value = "";
         document.getElementById("login-password").value = "";
     }
@@ -120,13 +149,11 @@ class SecureChat {
         console.log("Setting up listeners");
         document.getElementById("login-btn").addEventListener("click", () => this.login());
         document.getElementById("send-btn").addEventListener("click", () => this.sendMessage());
-        document.getElementById("create-conf-btn").addEventListener("click", () => this.createConference());
         document.getElementById("register-user-btn").addEventListener("click", () => this.registerUser());
         document.getElementById("change-password-btn").addEventListener("click", () => this.changePassword());
         document.getElementById("delete-selected-btn").addEventListener("click", () => this.deleteSelectedUsers());
         document.getElementById("logout-btn").addEventListener("click", () => this.logout());
 
-        // Обработчик вкладок
         document.querySelectorAll(".tab-btn").forEach(button => {
             button.addEventListener("click", () => {
                 document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
@@ -140,15 +167,6 @@ class SecureChat {
                     this.renderUserList();
                 }
             });
-        });
-
-        // Закрытие dropdown при клике вне его
-        document.addEventListener("click", (event) => {
-            const dropdown = document.getElementById("member-dropdown");
-            const addMembersBtn = document.getElementById("add-members-btn");
-            if (!dropdown.contains(event.target) && event.target !== addMembersBtn) {
-                dropdown.style.display = "none";
-            }
         });
     }
 
@@ -167,6 +185,8 @@ class SecureChat {
         this.conferences.clear();
         this.users = [];
         this.onlineUsers = [];
+        this.lastActivity.clear();
+        this.activityTimeouts.clear();
         this.currentConference = null;
         this.selectedMembers.clear();
         localStorage.removeItem("session_token");
@@ -245,7 +265,8 @@ class SecureChat {
     }
 
     async sendConferenceMessage(confId) {
-        const messageInput = document.getElementById(`conf-message-input-${confId}`);
+        const safeConfId = encodeURIComponent(confId);
+        const messageInput = document.getElementById(`conf-message-input-${safeConfId}`);
         const message = messageInput.value.trim();
         if (!message) {
             alert("Please enter a message");
@@ -296,32 +317,69 @@ class SecureChat {
         return Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    toggleMemberDropdown(event) {
-        event.stopPropagation();
-        const dropdown = document.getElementById("member-dropdown");
-        if (dropdown.style.display === "block") {
-            dropdown.style.display = "none";
-            return;
-        }
-        dropdown.style.display = "block";
-        dropdown.innerHTML = "";
+    showCreateConferenceModal() {
+        this.selectedMembers.clear();
+        document.getElementById("new-conf-id").value = "";
+        const modal = document.getElementById("create-conference-modal");
+        modal.style.display = "flex";
+        this.renderNewConferenceMembersList();
+    }
+
+    showAddMembersModal() {
+        this.selectedMembers.clear();
+        const modal = document.getElementById("add-members-modal");
+        modal.style.display = "flex";
+        this.renderAddMembersList();
+    }
+
+    closeModal(modalId) {
+        document.getElementById(modalId).style.display = "none";
+        this.selectedMembers.clear();
+    }
+
+    renderNewConferenceMembersList() {
+        const membersList = document.getElementById("new-conf-members-list");
+        membersList.innerHTML = "";
         this.users.forEach(user => {
             if (user !== this.username) {
-                const label = document.createElement("label");
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
-                checkbox.value = user;
-                checkbox.checked = this.selectedMembers.has(user);
-                checkbox.addEventListener("change", () => {
-                    if (checkbox.checked) {
+                const memberDiv = document.createElement("div");
+                memberDiv.className = "member-item";
+                memberDiv.innerHTML = `
+                    <input type="checkbox" id="new-member-${user}" value="${user}">
+                    <label for="new-member-${user}">${user}</label>
+                `;
+                memberDiv.querySelector("input").addEventListener("change", (e) => {
+                    if (e.target.checked) {
                         this.selectedMembers.add(user);
                     } else {
                         this.selectedMembers.delete(user);
                     }
                 });
-                label.appendChild(checkbox);
-                label.appendChild(document.createTextNode(user));
-                dropdown.appendChild(label);
+                membersList.appendChild(memberDiv);
+            }
+        });
+    }
+
+    renderAddMembersList() {
+        const membersList = document.getElementById("add-members-list");
+        membersList.innerHTML = "";
+        const conf = this.conferences.get(this.currentConference);
+        this.users.forEach(user => {
+            if (user !== this.username && !conf.members.includes(user)) {
+                const memberDiv = document.createElement("div");
+                memberDiv.className = "member-item";
+                memberDiv.innerHTML = `
+                    <input type="checkbox" id="add-member-${user}" value="${user}">
+                    <label for="add-member-${user}">${user}</label>
+                `;
+                memberDiv.querySelector("input").addEventListener("change", (e) => {
+                    if (e.target.checked) {
+                        this.selectedMembers.add(user);
+                    } else {
+                        this.selectedMembers.delete(user);
+                    }
+                });
+                membersList.appendChild(memberDiv);
             }
         });
     }
@@ -331,7 +389,7 @@ class SecureChat {
             alert("Only admins can create conferences");
             return;
         }
-        const confId = document.getElementById("conf-id").value.trim();
+        const confId = document.getElementById("new-conf-id").value.trim();
         const members = Array.from(this.selectedMembers);
         if (!confId || members.length === 0) {
             alert("Please enter conference ID and select members");
@@ -343,13 +401,35 @@ class SecureChat {
             conf_id: confId,
             members: members
         }));
-        document.getElementById("conf-id").value = "";
-        this.selectedMembers.clear();
-        document.getElementById("member-dropdown").style.display = "none";
+        this.closeModal("create-conference-modal");
+    }
+
+    async addMembersToConference() {
+        if (!this.isAdmin) {
+            alert("Only admins can add members to conferences");
+            return;
+        }
+        const confId = this.currentConference;
+        const conf = this.conferences.get(confId);
+        const newMembers = Array.from(this.selectedMembers);
+        if (newMembers.length === 0) {
+            alert("Please select members to add");
+            return;
+        }
+        const updatedMembers = [...new Set([...conf.members, ...newMembers])];
+        console.log("Adding members to conference:", confId, newMembers);
+        this.ws.send(JSON.stringify({
+            type: "create_conference",
+            conf_id: confId,
+            members: updatedMembers
+        }));
+        this.closeModal("add-members-modal");
     }
 
     updateConference(confId, members) {
+        console.log("Updating conference:", confId, members);
         this.conferences.set(confId, { members, messages: this.conferences.get(confId)?.messages || [] });
+        console.log("Updated conferences map:", this.conferences);
         this.renderConferences();
         this.currentConference = confId;
         this.showConference(confId);
@@ -363,6 +443,7 @@ class SecureChat {
             confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
             confDiv.textContent = confId;
             confDiv.addEventListener("click", () => {
+                console.log("Conference clicked:", confId);
                 this.currentConference = confId;
                 this.showConference(confId);
             });
@@ -380,6 +461,7 @@ class SecureChat {
                 confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
                 confDiv.textContent = confId;
                 confDiv.addEventListener("click", () => {
+                    console.log("Conference clicked:", confId);
                     this.currentConference = confId;
                     this.showConference(confId);
                 });
@@ -389,6 +471,9 @@ class SecureChat {
     }
 
     showConference(confId) {
+        console.log("Showing conference:", confId);
+        console.log("Conferences map:", this.conferences);
+
         document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
         document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
         document.getElementById("global-messages").classList.remove("active");
@@ -396,62 +481,125 @@ class SecureChat {
         this.renderConferences();
 
         const conf = this.conferences.get(confId);
-        if (!conf) return;
+        console.log("Conference data:", conf);
+        if (!conf) {
+            console.error("Conference not found for ID:", confId);
+            document.getElementById("conference-content").innerHTML = "<p>Conference not found.</p>";
+            return;
+        }
 
+        const safeConfId = encodeURIComponent(confId);
         const confContent = document.getElementById("conference-content");
         confContent.innerHTML = `
             <h3>${confId}</h3>
-            <div class="members-list" id="conf-members-${confId}"></div>
+            <button onclick="chat.showAddMembersModal()" style="${this.isAdmin ? '' : 'display: none;'}">Add Members</button>
+            <div class="members-list" id="conf-members-${safeConfId}"></div>
             <div class="conference-search">
-                <input id="conf-search-${confId}" placeholder="Search messages...">
+                <input id="conf-search-${safeConfId}" placeholder="Search messages...">
                 <button onclick="chat.searchConferenceMessages('${confId}')"><i class="fas fa-search"></i> Search</button>
             </div>
-            <div class="conference-messages" id="conf-messages-${confId}"></div>
+            <div class="conference-messages" id="conf-messages-${safeConfId}"></div>
             <div class="conference-input-container">
-                <input id="conf-message-input-${confId}" placeholder="Type your message...">
+                <input id="conf-message-input-${safeConfId}" placeholder="Type your message...">
                 <button onclick="chat.sendConferenceMessage('${confId}')">Send</button>
             </div>
         `;
+        console.log("Conference content HTML set:", confContent.innerHTML);
+        console.log("Rendering members for:", confId, conf.members);
         this.renderConferenceMembers(confId, conf.members);
+        console.log("Rendering messages for:", confId, conf.messages);
         this.renderConferenceMessages(confId, conf.messages);
+
+        // Запрашиваем историю сообщений с сервера
+        this.ws.send(JSON.stringify({
+            type: "get_conference_messages",
+            conf_id: confId
+        }));
     }
 
     renderConferenceMembers(confId, members) {
-        const membersList = document.getElementById(`conf-members-${confId}`);
+        const safeConfId = encodeURIComponent(confId);
+        const membersList = document.getElementById(`conf-members-${safeConfId}`);
         membersList.innerHTML = "";
         members.forEach(member => {
             const memberDiv = document.createElement("div");
             memberDiv.className = "member-item";
-            const isOnline = this.onlineUsers.includes(member);
+            const status = this.getUserStatus(member);
             memberDiv.innerHTML = `
-                <span class="online-status ${isOnline ? 'online' : 'offline'}"></span>
+                <span class="online-status ${status}"></span>
                 ${member}
             `;
             membersList.appendChild(memberDiv);
         });
+        console.log("Members list HTML:", membersList.innerHTML);
+    }
+
+    getUserStatus(user) {
+        if (!this.onlineUsers.includes(user)) return "offline";
+        const lastActive = this.lastActivity.get(user) || 0;
+        const inactiveTime = Date.now() - lastActive;
+        if (inactiveTime < 5 * 60 * 1000) return "online";
+        if (inactiveTime < 20 * 60 * 1000) return "inactive";
+        return "offline";
+    }
+
+    updateLastActivity(user) {
+        this.lastActivity.set(user, Date.now());
+        
+        if (this.activityTimeouts.has(user)) {
+            clearTimeout(this.activityTimeouts.get(user));
+        }
+
+        const inactiveTimeout = setTimeout(() => {
+            if (this.currentConference) {
+                this.showConference(this.currentConference);
+            }
+        }, 5 * 60 * 1000);
+
+        const offlineTimeout = setTimeout(() => {
+            if (this.currentConference) {
+                this.showConference(this.currentConference);
+            }
+        }, 20 * 60 * 1000);
+
+        this.activityTimeouts.set(user, inactiveTimeout);
+        this.activityTimeouts.set(user + "-offline", offlineTimeout);
+    }
+
+    startActivityTracking() {
+        setInterval(() => {
+            this.onlineUsers.forEach(user => {
+                if (this.currentConference) {
+                    this.showConference(this.currentConference);
+                }
+            });
+        }, 60 * 1000);
     }
 
     renderConferenceMessages(confId, messages) {
-        const messagesDiv = document.getElementById(`conf-messages-${confId}`);
+        const safeConfId = encodeURIComponent(confId);
+        const messagesDiv = document.getElementById(`conf-messages-${safeConfId}`);
         messagesDiv.innerHTML = "";
         messages.forEach(msg => {
             const msgDiv = document.createElement("div");
             msgDiv.className = msg.from === "You" ? "sent" : "received";
             msgDiv.innerHTML = `
-                ${msg.from}: [Encrypted]
+                ${msg.from}: ${msg.text}
                 <div class="message-timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</div>
             `;
             messagesDiv.appendChild(msgDiv);
         });
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        console.log("Messages div HTML:", messagesDiv.innerHTML);
     }
 
     searchConferenceMessages(confId) {
-        const searchInput = document.getElementById(`conf-search-${confId}`).value.toLowerCase();
+        const safeConfId = encodeURIComponent(confId);
+        const searchInput = document.getElementById(`conf-search-${safeConfId}`).value.toLowerCase();
         const conf = this.conferences.get(confId);
         if (!conf) return;
         const filteredMessages = searchInput
-            ? conf.messages.filter(msg => msg.from.toLowerCase().includes(searchInput) || "[Encrypted]".includes(searchInput))
+            ? conf.messages.filter(msg => msg.from.toLowerCase().includes(searchInput) || msg.text.toLowerCase().includes(searchInput))
             : conf.messages;
         this.renderConferenceMessages(confId, filteredMessages);
     }
@@ -474,7 +622,7 @@ class SecureChat {
             return;
         }
         this.ws.send(JSON.stringify({
-            "type": "register_user",
+            type: "register_user",
             username: username,
             password: password,
             is_admin: isAdmin,
@@ -534,10 +682,13 @@ class SecureChat {
         console.log("Updating user list:", users);
         this.onlineUsers = users;
         this.users.forEach(user => {
-            if (this.conferences.size > 0 && this.currentConference) {
-                this.showConference(this.currentConference);
+            if (!this.lastActivity.has(user) && users.includes(user)) {
+                this.updateLastActivity(user);
             }
         });
+        if (this.currentConference) {
+            this.showConference(this.currentConference);
+        }
     }
 
     displayMessage(from, text) {
