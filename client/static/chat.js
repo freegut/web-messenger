@@ -1,8 +1,13 @@
 class SecureChat {
     constructor() {
         console.log("Initializing SecureChat");
-        this.ws = new WebSocket("ws://localhost:8765/ws");
+        this.ws = new WebSocket("ws://localhost:8765"); // Убрали /ws
         this.ws.onopen = () => console.log("WebSocket connected");
+        this.ws.onclose = () => {
+            console.log("WebSocket disconnected");
+            this.showLoginPrompt();
+            setTimeout(() => this.reconnect(), 3000); // Переподключение через 3 секунды
+        };
         this.ws.onerror = (e) => console.log("WebSocket error:", e);
         this.ws.onmessage = (e) => this.handleMessage(e);
         this.username = null;
@@ -23,95 +28,152 @@ class SecureChat {
         this.startActivityTracking();
     }
 
+    reconnect() {
+        console.log("Attempting to reconnect...");
+        this.ws = new WebSocket("ws://localhost:8765"); // Убрали /ws
+        this.ws.onopen = () => console.log("WebSocket reconnected");
+        this.ws.onclose = () => {
+            console.log("WebSocket disconnected");
+            this.showLoginPrompt();
+            setTimeout(() => this.reconnect(), 3000);
+        };
+        this.ws.onerror = (e) => console.log("WebSocket error:", e);
+        this.ws.onmessage = (e) => this.handleMessage(e);
+    }
+
+    async login() {
+        this.username = document.getElementById("login-username").value.trim();
+        const password = document.getElementById("login-password").value.trim();
+        console.log("Login attempt:", this.username, password);
+        if (!this.username || !password) {
+            alert("Please enter username and password");
+            return;
+        }
+        console.log("Sending login message");
+        if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: "login",
+                username: this.username,
+                password: password
+            }));
+        } else {
+            console.error("Cannot send message: WebSocket is not open. Current state:", this.ws.readyState);
+            this.reconnect();
+        }
+    }
+
+    logout() {
+        this.username = null;
+        this.sessionToken = null;
+        this.isAdmin = false;
+        this.conferences.clear();
+        this.users = [];
+        this.onlineUsers = [];
+        this.lastActivity.clear();
+        this.activityTimeouts.clear();
+        this.currentConference = null;
+        this.selectedMembers.clear();
+        localStorage.removeItem("session_token");
+        this.ws.close();
+        this.reconnect(); // Переподключение после логаута
+    }
+
     async handleMessage(event) {
-        const data = JSON.parse(event.data);
-        console.log("Received message:", data);
-        
-        switch (data.type) {
-            case "login_success":
-                alert("Login successful!");
-                this.sessionToken = data.session_token;
-                localStorage.setItem("session_token", this.sessionToken);
-                this.isAdmin = data.is_admin;
-                document.getElementById("login").style.display = "none";
-                document.getElementById("chat").style.display = "flex";
-                document.getElementById("user-nick").textContent = this.username;
-                if (this.isAdmin) {
-                    document.getElementById("tabs").style.display = "flex";
-                    document.getElementById("create-conf-btn-modal").style.display = "block";
-                    document.querySelectorAll(".tab-btn[data-tab='register-tab'], .tab-btn[data-tab='change-password-tab'], .tab-btn[data-tab='delete-tab']").forEach(btn => {
-                        btn.style.display = "block";
-                    });
-                }
-                await this.generateKeys();
-                this.ws.send(JSON.stringify({
-                    type: "get_public_key",
-                    username: this.username
-                }));
-                this.ws.send(JSON.stringify({
-                    type: "get_all_users"
-                }));
-                this.ws.send(JSON.stringify({
-                    type: "get_conferences"
-                }));
-                this.updateLastActivity(this.username);
-                break;
-            case "error":
-                alert(`Error: ${data.message}`);
-                break;
-            case "user_list":
-                this.updateUserList(data.users);
-                break;
-            case "all_users":
-                this.users = data.users;
-                this.renderUserList();
-                break;
-            case "conference_update":
-                this.updateConference(data.conf_id, data.members);
-                break;
-            case "conference_message":
-                this.displayConferenceMessage(data.conf_id, data.from, data.text);
-                this.updateLastActivity(data.from);
-                break;
-            case "public_key":
-                this.publicKeys.set(data.username, data.pubkey);
-                break;
-            case "register_success":
-                alert(`User ${data.message}`);
-                this.ws.send(JSON.stringify({
-                    type: "get_all_users"
-                }));
-                break;
-            case "change_password_success":
-                alert(`Password changed: ${data.message}`);
-                break;
-            case "delete_user_success":
-                alert(`Users deleted: ${data.message}`);
-                this.ws.send(JSON.stringify({
-                    type: "get_all_users"
-                }));
-                break;
-            case "conference_list":
-                console.log("Received conference list:", data.conferences);
-                Object.entries(data.conferences).forEach(([confId, members]) => {
-                    this.conferences.set(confId, { members, messages: this.conferences.get(confId)?.messages || [] });
-                });
-                this.renderConferences();
-                break;
-            case "conference_messages":
-                console.log("Received conference messages:", data);
-                const conf = this.conferences.get(data.conf_id);
-                if (conf) {
-                    conf.messages = data.messages.map(msg => ({
-                        from: msg.from,
-                        text: msg.text,
-                        timestamp: new Date(msg.timestamp).getTime()
-                    }));
-                    if (this.currentConference === data.conf_id) {
-                        this.showConference(data.conf_id);
+        try {
+            const data = JSON.parse(event.data);
+            console.log("Received message:", data);
+            
+            switch (data.type) {
+                case "login_success":
+                    alert("Login successful!");
+                    this.sessionToken = data.session_token;
+                    localStorage.setItem("session_token", this.sessionToken);
+                    this.isAdmin = data.is_admin;
+                    document.getElementById("login").style.display = "none";
+                    document.getElementById("chat").style.display = "flex";
+                    document.getElementById("user-nick").textContent = this.username;
+                    if (this.isAdmin) {
+                        document.getElementById("tabs").style.display = "flex";
+                        document.getElementById("create-conf-btn-modal").style.display = "block";
+                        document.querySelectorAll(".tab-btn[data-tab='register-tab'], .tab-btn[data-tab='change-password-tab'], .tab-btn[data-tab='delete-tab']").forEach(btn => {
+                            btn.style.display = "block";
+                        });
                     }
-                }
-                break;
+                    await this.generateKeys();
+                    this.ws.send(JSON.stringify({
+                        type: "get_public_key",
+                        username: this.username
+                    }));
+                    this.ws.send(JSON.stringify({
+                        type: "get_all_users"
+                    }));
+                    this.ws.send(JSON.stringify({
+                        type: "get_conferences"
+                    }));
+                    this.updateLastActivity(this.username);
+                    break;
+                case "error":
+                    console.error("Server error:", data.message);
+                    alert(`Error: ${data.message}`);
+                    break;
+                case "user_list":
+                    this.updateUserList(data.users);
+                    break;
+                case "all_users":
+                    this.users = data.users;
+                    this.renderUserList();
+                    break;
+                case "conference_update":
+                    this.updateConference(data.conf_id, data.members);
+                    break;
+                case "conference_message":
+                    this.displayConferenceMessage(data.conf_id, data.from, data.text);
+                    this.updateLastActivity(data.from);
+                    break;
+                case "public_key":
+                    this.publicKeys.set(data.username, data.pubkey);
+                    break;
+                case "register_success":
+                    alert(`User ${data.message}`);
+                    this.ws.send(JSON.stringify({
+                        type: "get_all_users"
+                    }));
+                    break;
+                case "change_password_success":
+                    alert(`Password changed: ${data.message}`);
+                    break;
+                case "delete_user_success":
+                    alert(`Users deleted: ${data.message}`);
+                    this.ws.send(JSON.stringify({
+                        type: "get_all_users"
+                    }));
+                    break;
+                case "conference_list":
+                    console.log("Received conference list:", data.conferences);
+                    Object.entries(data.conferences).forEach(([confId, members]) => {
+                        this.conferences.set(confId, { members, messages: this.conferences.get(confId)?.messages || [] });
+                    });
+                    this.renderConferences();
+                    break;
+                case "conference_messages":
+                    console.log("Received conference messages:", data);
+                    const conf = this.conferences.get(data.conf_id);
+                    if (conf) {
+                        conf.messages = data.messages.map(msg => ({
+                            from: msg.from,
+                            text: msg.text,
+                            timestamp: new Date(msg.timestamp).getTime()
+                        }));
+                        if (this.currentConference === data.conf_id) {
+                            this.showConference(data.conf_id);
+                        }
+                    }
+                    break;
+                default:
+                    console.warn("Unknown message type:", data.type);
+            }
+        } catch (e) {
+            console.error("Error handling message:", e);
         }
     }
 
@@ -164,42 +226,6 @@ class SecureChat {
                 }
             });
         });
-    }
-
-    logout() {
-        this.username = null;
-        this.sessionToken = null;
-        this.isAdmin = false;
-        this.conferences.clear();
-        this.users = [];
-        this.onlineUsers = [];
-        this.lastActivity.clear();
-        this.activityTimeouts.clear();
-        this.currentConference = null;
-        this.selectedMembers.clear();
-        localStorage.removeItem("session_token");
-        this.ws.close();
-        this.ws = new WebSocket("ws://localhost:8765/ws");
-        this.ws.onopen = () => console.log("WebSocket reconnected after logout");
-        this.ws.onerror = (e) => console.log("WebSocket error:", e);
-        this.ws.onmessage = (e) => this.handleMessage(e);
-        this.showLoginPrompt();
-    }
-
-    async login() {
-        this.username = document.getElementById("login-username").value.trim();
-        const password = document.getElementById("login-password").value.trim();
-        console.log("Login attempt:", this.username, password);
-        if (!this.username || !password) {
-            alert("Please enter username and password");
-            return;
-        }
-        console.log("Sending login message");
-        this.ws.send(JSON.stringify({
-            type: "login",
-            username: this.username,
-            password: password
-        }));
     }
 
     async sendConferenceMessage(confId) {
@@ -374,7 +400,7 @@ class SecureChat {
     }
 
     renderConferences() {
-        const conferenceList = document.getElementById("conference-list");
+        const conferenceList = document.getElementById("conferences-list");
         conferenceList.innerHTML = "";
         this.conferences.forEach((conf, confId) => {
             const confDiv = document.createElement("div");
@@ -389,33 +415,12 @@ class SecureChat {
         });
     }
 
-    searchConferences() {
-        const searchInput = document.getElementById("conf-search").value.toLowerCase();
-        const conferenceList = document.getElementById("conference-list");
-        conferenceList.innerHTML = "";
-        this.conferences.forEach((conf, confId) => {
-            if (confId.toLowerCase().includes(searchInput) || conf.members.some(member => member.toLowerCase().includes(searchInput))) {
-                const confDiv = document.createElement("div");
-                confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
-                confDiv.textContent = confId;
-                confDiv.addEventListener("click", () => {
-                    console.log("Conference clicked:", confId);
-                    this.currentConference = confId;
-                    this.showConference(confId);
-                });
-                conferenceList.appendChild(confDiv);
-            }
-        });
-    }
-
     showConference(confId) {
         console.log("Showing conference:", confId);
         console.log("Conferences map:", this.conferences);
 
         document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
         document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-        document.getElementById("conf-tab").classList.add("active");
-        document.querySelector(".tab-btn[data-tab='conf-tab']").classList.add("active");
         document.getElementById("conference-content").classList.add("active");
         this.renderConferences();
 
@@ -433,11 +438,7 @@ class SecureChat {
             <h3>${confId}</h3>
             <button onclick="chat.showAddMembersModal()" style="${this.isAdmin ? '' : 'display: none;'}">Add Members</button>
             <div class="members-list" id="conf-members-${safeConfId}"></div>
-            <div class="conference-search">
-                <input id="conf-search-${safeConfId}" placeholder="Search messages...">
-                <button onclick="chat.searchConferenceMessages('${confId}')"><i class="fas fa-search"></i> Search</button>
-            </div>
-            <div class="conference-messages" id="conf-messages-${safeConfId}"></div>
+            <div class="messages" id="conf-messages-${safeConfId}"></div>
             <div class="conference-input-container">
                 <input id="conf-message-input-${safeConfId}" placeholder="Type your message...">
                 <button onclick="chat.sendConferenceMessage('${confId}')">Send</button>
@@ -446,6 +447,7 @@ class SecureChat {
         console.log("Conference content HTML set:", confContent.innerHTML);
         console.log("Rendering members for:", confId, conf.members);
         this.renderConferenceMembers(confId, conf.members);
+
         console.log("Rendering messages for:", confId, conf.messages);
         this.renderConferenceMessages(confId, conf.messages);
 
@@ -532,17 +534,6 @@ class SecureChat {
         console.log("Messages div HTML:", messagesDiv.innerHTML);
     }
 
-    searchConferenceMessages(confId) {
-        const safeConfId = encodeURIComponent(confId);
-        const searchInput = document.getElementById(`conf-search-${safeConfId}`).value.toLowerCase();
-        const conf = this.conferences.get(confId);
-        if (!conf) return;
-        const filteredMessages = searchInput
-            ? conf.messages.filter(msg => msg.from.toLowerCase().includes(searchInput) || msg.text.toLowerCase().includes(searchInput))
-            : conf.messages;
-        this.renderConferenceMessages(confId, filteredMessages);
-    }
-
     displayConferenceMessage(confId, from, text) {
         const conf = this.conferences.get(confId);
         if (!conf) return;
@@ -553,9 +544,9 @@ class SecureChat {
     }
 
     async registerUser() {
-        const username = document.getElementById("admin-reg-username").value.trim();
-        const password = document.getElementById("admin-reg-password").value.trim();
-        const isAdmin = document.getElementById("admin-reg-is-admin").checked;
+        const username = document.getElementById("register-username").value.trim();
+        const password = document.getElementById("register-password").value.trim();
+        const isAdmin = document.getElementById("register-is-admin").checked;
         if (!username || !password) {
             alert("Please enter username and password");
             return;
@@ -567,14 +558,14 @@ class SecureChat {
             is_admin: isAdmin,
             pubkey: "{}"
         }));
-        document.getElementById("admin-reg-username").value = "";
-        document.getElementById("admin-reg-password").value = "";
-        document.getElementById("admin-reg-is-admin").checked = false;
+        document.getElementById("register-username").value = "";
+        document.getElementById("register-password").value = "";
+        document.getElementById("register-is-admin").checked = false;
     }
 
     async changePassword() {
-        const username = document.getElementById("admin-change-username").value.trim();
-        const password = document.getElementById("admin-change-password").value.trim();
+        const username = document.getElementById("change-password-username").value.trim();
+        const password = document.getElementById("change-password-new").value.trim();
         if (!username || !password) {
             alert("Please enter username and new password");
             return;
@@ -584,12 +575,12 @@ class SecureChat {
             username: username,
             password: password
         }));
-        document.getElementById("admin-change-username").value = "";
-        document.getElementById("admin-change-password").value = "";
+        document.getElementById("change-password-username").value = "";
+        document.getElementById("change-password-new").value = "";
     }
 
     renderUserList() {
-        const userList = document.getElementById("user-list");
+        const userList = document.getElementById("delete-users-list");
         userList.innerHTML = "";
         this.users.forEach(user => {
             if (user !== this.username) {
@@ -605,7 +596,7 @@ class SecureChat {
     }
 
     async deleteSelectedUsers() {
-        const selectedUsers = Array.from(document.querySelectorAll('#user-list input[type="checkbox"]:checked'))
+        const selectedUsers = Array.from(document.querySelectorAll('#delete-users-list input[type="checkbox"]:checked'))
             .map(checkbox => checkbox.value);
         if (selectedUsers.length === 0) {
             alert("Please select at least one user to delete");

@@ -10,11 +10,23 @@ from cryptography.fernet import Fernet
 
 print("Starting server...")
 
-# Получаем мастер-ключ из переменной окружения
+# Получаем мастер-ключ из переменной окружения или файла
+MASTER_KEY_PATH = "/app/master_key.txt"
 MASTER_KEY = os.getenv("MASTER_KEY")
+
 if not MASTER_KEY:
-    print("MASTER_KEY not set, generating a new one...")
-    MASTER_KEY = Fernet.generate_key().decode()
+    print("MASTER_KEY not set in environment, checking file...")
+    try:
+        with open(MASTER_KEY_PATH, "r") as f:
+            MASTER_KEY = f.read().strip()
+        print("MASTER_KEY loaded from file")
+    except FileNotFoundError:
+        print("MASTER_KEY file not found, generating a new one...")
+        MASTER_KEY = Fernet.generate_key().decode()
+        with open(MASTER_KEY_PATH, "w") as f:
+            f.write(MASTER_KEY)
+        print(f"New MASTER_KEY generated and saved to {MASTER_KEY_PATH}")
+
 MASTER_FERNET = Fernet(MASTER_KEY.encode())
 print("Master key initialized")
 
@@ -80,7 +92,7 @@ def decrypt_conference_key(encrypted_key):
     return MASTER_FERNET.decrypt(encrypted_key.encode()).decode()
 
 async def handle_connection(websocket, path):
-    print("New connection")
+    print(f"New connection on path: {path}")
     username = None
     try:
         async for message in websocket:
@@ -323,8 +335,21 @@ async def handle_connection(websocket, path):
                     "messages": decrypted_messages
                 }))
 
+            elif data["type"] == "get_all_users":
+                conn = sqlite3.connect("chat.db")
+                c = conn.cursor()
+                c.execute("SELECT username FROM users")
+                users = [row[0] for row in c.fetchall()]
+                conn.close()
+                await websocket.send(json.dumps({
+                    "type": "all_users",
+                    "users": users
+                }))
+
     except websockets.exceptions.ConnectionClosed:
         print("Connection closed")
+    except Exception as e:
+        print(f"Error: {e}")
     finally:
         if username in connections:
             del connections[username]
@@ -346,8 +371,8 @@ def is_admin(username):
     conn.close()
     return result and result[0]
 
-print("Starting WebSocket server on ws://localhost:8765")
-start_server = websockets.serve(handle_connection, "localhost", 8765)
+print("Starting WebSocket server on ws://0.0.0.0:8765")
+start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
 
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()
