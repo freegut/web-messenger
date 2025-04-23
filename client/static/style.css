@@ -1,38 +1,371 @@
-#chat, #login, #admin-panel {
-    width: 500px;
-    margin: 20px auto;
-    border: 1px solid #ccc;
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f0f2f5;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+#login {
+    background: white;
     padding: 20px;
-    font-family: Arial, sans-serif;
-}
-#messages {
-    height: 300px;
-    overflow-y: scroll;
-    border: 1px solid #eee;
-    margin-bottom: 10px;
-    padding: 10px;
-}
-#recipient, #message-input, #conf-id, #conf-members, #login-username, #login-password,
-#admin-reg-username, #admin-reg-password, #admin-change-username, #admin-change-password, #admin-delete-username {
-    padding: 5px;
-    margin: 5px 0;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
     width: 100%;
+}
+
+#chat {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-container {
+    display: flex;
+    flex: 1;
+    height: 100%;
+}
+
+.sidebar {
+    width: 300px;
+    background: #2f3136;
+    color: white;
+    padding: 20px;
+    overflow-y: auto;
+    border-right: 1px solid #ddd;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.chat-header h2 {
+    color: white;
+    margin: 0;
+    font-size: 20px;
+}
+
+h3 {
+    color: #b9bbbe;
+    margin: 20px 0 10px 0;
+    font-size: 16px;
+    text-transform: uppercase;
+}
+
+input, select, button {
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
     box-sizing: border-box;
 }
-#send-btn, #create-conf-btn, #login-btn, #register-user-btn, #change-password-btn, #delete-user-btn {
-    padding: 5px 10px;
+
+input, select {
+    width: 100%;
+}
+
+button {
+    background-color: #5865f2;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #4752c4;
+}
+
+.logout-btn {
+    background-color: #dc3545;
+    padding: 8px 16px;
+    border-radius: 6px;
+}
+
+.logout-btn:hover {
+    background-color: #c82333;
+}
+
+#tabs {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 10px;
+    font-size: 14px;
+    color: #b9bbbe;
+    text-align: left;
+    cursor: pointer;
+    transition: color 0.3s;
+}
+
+.tab-btn i {
+    margin-right: 8px;
+}
+
+.tab-btn:hover {
+    color: white;
+}
+
+.tab-btn.active {
+    color: white;
+    background: #40444b;
+    border-radius: 4px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.conference-section {
+    flex: 1;
+}
+
+.conference-search {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.conference-search input {
+    flex: 1;
+    background: #202225;
+    border: none;
+    color: white;
+}
+
+.conference-search button {
+    margin-left: 5px;
+    background: #5865f2;
+    padding: 8px;
+}
+
+.conference-search button:hover {
+    background: #4752c4;
+}
+
+#conference-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.conference-item {
+    padding: 10px;
     margin: 5px 0;
+    background: #36393f;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.conference-item:hover {
+    background: #40444b;
+}
+
+.conference-item.active {
+    background: #5865f2;
+    color: white;
+}
+
+.main-content {
+    flex: 1;
+    background: white;
+    padding: 20px;
+    overflow-y: auto;
+    position: relative;
+}
+
+.message-area {
+    display: none;
+    height: 100%;
+    flex-direction: column;
+}
+
+.message-area.active {
+    display: flex;
+}
+
+.message-content, .conference-messages {
+    flex: 1;
+    max-height: 70vh;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 20px;
+    background: #fafafa;
+    border-radius: 6px;
+}
+
+.message-content div, .conference-messages div {
+    padding: 8px 12px;
+    margin: 5px 0;
+    border-radius: 6px;
+    position: relative;
+}
+
+.message-content div.sent, .conference-messages div.sent {
+    background-color: #007bff;
+    color: white;
+    text-align: right;
+    margin-left: 20%;
+}
+
+.message-content div.received, .conference-messages div.received {
+    background-color: #e9ecef;
+    text-align: left;
+    margin-right: 20%;
+}
+
+.message-timestamp {
+    font-size: 12px;
+    color: #888;
+    margin-top: 4px;
+    text-align: right;
+}
+
+.message-input-container, .conference-input-container {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.message-input-container input, .conference-input-container input {
+    flex: 1;
+}
+
+.message-input-container button, .conference-input-container button {
+    padding: 10px;
+}
+
+#user-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 20px;
+    background: #fafafa;
+    border-radius: 6px;
+}
+
+.user-item {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+
+.user-item:last-child {
+    border-bottom: none;
+}
+
+.user-item input[type="checkbox"] {
+    margin-right: 10px;
+}
+
+#delete-selected-btn {
+    background-color: #dc3545;
+}
+
+#delete-selected-btn:hover {
+    background-color: #c82333;
+}
+
+label {
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+}
+
+input[type="checkbox"] {
+    width: auto;
+    margin-right: 10px;
+}
+
+.dropdown {
+    position: relative;
+    margin: 5px 0;
+}
+
+.dropdown-content {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #36393f;
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+    width: 100%;
+}
+
+.dropdown-content label {
+    display: block;
+    padding: 8px 12px;
+    color: white;
     cursor: pointer;
 }
-#conferences {
-    margin-top: 10px;
+
+.dropdown-content label:hover {
+    background: #40444b;
+}
+
+.members-list {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
     padding: 10px;
-    border: 1px solid #eee;
+    margin-bottom: 20px;
+    background: #fafafa;
+    border-radius: 6px;
 }
-h2, h3 {
-    margin: 0 0 10px;
+
+.member-item {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    border-bottom: 1px solid #eee;
 }
-label {
-    margin: 5px 0;
-    display: block;
+
+.member-item:last-child {
+    border-bottom: none;
+}
+
+.online-status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.online-status.online {
+    background-color: #43b581;
+}
+
+.online-status.offline {
+    background-color: #747f8d;
 }

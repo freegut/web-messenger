@@ -23,20 +23,25 @@ class ChatServer:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     data = json.loads(msg.data)
+                    print(f"Received message: {data}")
                     if data["type"] == "login":
                         await self.login_user(ws, data)
                     elif data["type"] == "register_user" and await self.is_admin(ws):
                         await self.register_user(ws, data)
                     elif data["type"] == "change_password" and await self.is_admin(ws):
                         await self.change_password(ws, data)
-                    elif data["type"] == "delete_user" and await self.is_admin(ws):
-                        await self.delete_user(ws, data)
+                    elif data["type"] == "delete_users" and await self.is_admin(ws):
+                        await self.delete_users(ws, data)
                     elif data["type"] == "message":
                         await self.send_message(ws, data)
-                    elif data["type"] == "create_conference":
+                    elif data["type"] == "create_conference" and await self.is_admin(ws):
                         await self.create_conference(ws, data)
+                    elif data["type"] == "conference_message":
+                        await self.send_conference_message(ws, data)
                     elif data["type"] == "get_public_key":
                         await self.get_public_key(ws, data)
+                    elif data["type"] == "get_all_users":
+                        await self.get_all_users(ws)
         except Exception as e:
             print(f"Error: {e}")
         finally:
@@ -93,31 +98,30 @@ class ChatServer:
             "message": f"Password changed for {target_username}"
         })
 
-    async def delete_user(self, ws, data):
-        target_username = data["username"]
+    async def delete_users(self, ws, data):
+        usernames = data["usernames"]
+        deleted = []
         
-        if not await self.redis.exists(f"user:{target_username}:password"):
-            await ws.send_json({
-                "type": "error",
-                "message": f"User {target_username} not found"
-            })
-            return
-        
-        await self.redis.delete(f"user:{target_username}:password")
-        await self.redis.delete(f"user:{target_username}:pubkey")
-        await self.redis.delete(f"user:{target_username}:is_admin")
+        for username in usernames:
+            if await self.redis.exists(f"user:{username}:password"):
+                await self.redis.delete(f"user:{username}:password")
+                await self.redis.delete(f"user:{username}:pubkey")
+                await self.redis.delete(f"user:{username}:is_admin")
+                deleted.append(username)
         
         await ws.send_json({
             "type": "delete_user_success",
-            "message": f"User {target_username} deleted"
+            "message": ", ".join(deleted) if deleted else "None"
         })
 
     async def login_user(self, ws, data):
         username = data["username"]
         password = data["password"]
+        print(f"Login attempt: {username}")
         
         stored_hash = await self.redis.get(f"user:{username}:password")
         if stored_hash and bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+            print(f"Login successful: {username}")
             session_token = secrets.token_hex(32)
             self.sessions[session_token] = username
             self.clients[ws] = username
@@ -129,6 +133,7 @@ class ChatServer:
             })
             await self.broadcast_user_list()
         else:
+            print(f"Login failed: {username}")
             await ws.send_json({
                 "type": "error",
                 "message": "Invalid username or password"
@@ -136,52 +141,80 @@ class ChatServer:
 
     async def send_message(self, sender_ws, data):
         sender = self.clients.get(sender_ws)
-        recipient = data["recipient"]
-        encrypted_message = data["text"]
+        recipients = data["recipients"]
+        encrypted_messages = data["encrypted_messages"]
+        print(f"Sending message from {sender} to {recipients}")
         
-        recipient_ws = None
-        for ws, username in self.clients.items():
-            if username == recipient:
-                recipient_ws = ws
-                break
-        
-        if recipient_ws:
-            can_send = True
-            for conf_id, conf in self.conferences.items():
-                if sender in conf["members"] and recipient in conf["members"]:
-                    can_send = False
+        for recipient in recipients:
+            recipient_ws = None
+            for ws, username in self.clients.items():
+                if username == recipient:
+                    recipient_ws = ws
                     break
             
-            if can_send:
-                await recipient_ws.send_json({
-                    "type": "message",
-                    "from": sender,
-                    "text": encrypted_message
-                })
+            if recipient_ws:
+                can_send = True
+                for conf_id, conf in self.conferences.items():
+                    if sender in conf["members"] and recipient in conf["members"]:
+                        can_send = False
+                        break
+                
+                if can_send:
+                    await recipient_ws.send_json({
+                        "type": "message",
+                        "from": sender,
+                        "text": encrypted_messages[recipient]
+                    })
+                else:
+                    await sender_ws.send_json({
+                        "type": "error",
+                        "message": "Private messaging restricted in conference"
+                    })
             else:
                 await sender_ws.send_json({
                     "type": "error",
-                    "message": "Private messaging restricted in conference"
+                    "message": f"User {recipient} not found"
                 })
-        else:
+
+    async def send_conference_message(self, sender_ws, data):
+        sender = self.clients.get(sender_ws)
+        conf_id = data["conf_id"]
+        encrypted_messages = data["encrypted_messages"]
+        print(f"Sending conference message in {conf_id} from {sender}")
+        
+        if conf_id not in self.conferences:
             await sender_ws.send_json({
                 "type": "error",
-                "message": f"User {recipient} not found"
+                "message": "Conference not found"
             })
+            return
+        
+        for ws, username in self.clients.items():
+            if username in self.conferences[conf_id]["members"] and username != sender:
+                encrypted_message = encrypted_messages.get(username)
+                if encrypted_message:
+                    await ws.send_json({
+                        "type": "conference_message",
+                        "conf_id": conf_id,
+                        "from": sender,
+                        "text": encrypted_message
+                    })
 
     async def create_conference(self, sender_ws, data):
         conf_id = data["conf_id"]
         members = data["members"]
         admin = self.clients.get(sender_ws)
+        print(f"Creating conference {conf_id} with members: {members}")
         
         valid_members = set()
         for username in members:
             if await self.redis.exists(f"user:{username}:pubkey"):
                 valid_members.add(username)
         
+        valid_members.add(admin)
         self.conferences[conf_id] = {
             "admin": admin,
-            "members": valid_members | {admin}
+            "members": valid_members
         }
         
         for ws, username in self.clients.items():
@@ -201,6 +234,14 @@ class ChatServer:
             "pubkey": pubkey if pubkey else ""
         })
 
+    async def get_all_users(self, ws):
+        keys = await self.redis.keys("user:*:password")
+        users = [key.split(":")[1] for key in keys]
+        await ws.send_json({
+            "type": "all_users",
+            "users": users
+        })
+
     async def remove_client(self, ws):
         if ws in self.clients:
             username = self.clients[ws]
@@ -209,6 +250,7 @@ class ChatServer:
 
     async def broadcast_user_list(self):
         users = list(self.clients.values())
+        print(f"Broadcasting user list: {users}")
         for ws in self.clients:
             await ws.send_json({
                 "type": "user_list",
@@ -220,7 +262,6 @@ async def init_app():
     await server.init_redis()
     
     app = web.Application()
-    # Добавляем маршрут с именем 'ws'
     route = app.router.add_get("/ws", server.websocket_handler, name="ws")
     
     cors = aiohttp_cors.setup(app, defaults={

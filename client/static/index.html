@@ -1,49 +1,79 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Secure Chat</title>
+    <meta charset="UTF-8">
+    <title>R4</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <div id="login">
-        <h2>Login</h2>
+        <h2>Login to R4</h2>
         <input id="login-username" placeholder="Username">
         <input id="login-password" type="password" placeholder="Password">
         <button id="login-btn">Login</button>
     </div>
     <div id="chat" style="display: none;">
-        <h2>Secure Chat</h2>
-        <div id="messages"></div>
-        <select id="recipient">
-            <option value="">Select recipient</option>
-        </select>
-        <input id="message-input" placeholder="Сообщение...">
-        <button id="send-btn">Отправить</button>
-        <h3>Conferences</h3>
-        <div id="conferences"></div>
-        <input id="conf-id" placeholder="Conference ID">
-        <input id="conf-members" placeholder="Members (comma-separated)">
-        <button id="create-conf-btn">Create Conference</button>
-    </div>
-    <div id="admin-panel" style="display: none;">
-        <h2>Admin Panel</h2>
-        <div>
-            <h3>Register User</h3>
-            <input id="admin-reg-username" placeholder="Username">
-            <input id="admin-reg-password" type="password" placeholder="Password">
-            <label><input id="admin-reg-is-admin" type="checkbox"> Is Admin</label>
-            <button id="register-user-btn">Register</button>
-        </div>
-        <div>
-            <h3>Change Password</h3>
-            <input id="admin-change-username" placeholder="Username">
-            <input id="admin-change-password" type="password" placeholder="New Password">
-            <button id="change-password-btn">Change</button>
-        </div>
-        <div>
-            <h3>Delete User</h3>
-            <input id="admin-delete-username" placeholder="Username">
-            <button id="delete-user-btn">Delete</button>
+        <div class="chat-container">
+            <div class="sidebar">
+                <div class="chat-header">
+                    <h2 id="user-nick"></h2>
+                    <button id="logout-btn" class="logout-btn">Logout</button>
+                </div>
+                <div id="tabs" style="display: none;">
+                    <button class="tab-btn" data-tab="register-tab"><i class="fas fa-user-plus"></i> Register User</button>
+                    <button class="tab-btn" data-tab="password-tab"><i class="fas fa-key"></i> Change Password</button>
+                    <button class="tab-btn" data-tab="delete-tab"><i class="fas fa-user-minus"></i> Delete User</button>
+                </div>
+                <div class="conference-section">
+                    <h3>Conferences</h3>
+                    <div class="conference-search">
+                        <input id="conf-search" placeholder="Search conferences...">
+                        <button onclick="chat.searchConferences()"><i class="fas fa-search"></i></button>
+                    </div>
+                    <div id="create-conference" style="display: none;">
+                        <input id="conf-id" placeholder="Conference ID">
+                        <div class="dropdown">
+                            <button id="add-members-btn" onclick="chat.toggleMemberDropdown(event)">Add Members</button>
+                            <div id="member-dropdown" class="dropdown-content" style="display: none;"></div>
+                        </div>
+                        <button id="create-conf-btn">Create</button>
+                    </div>
+                    <div id="conference-list"></div>
+                </div>
+            </div>
+            <div class="main-content">
+                <div id="global-messages" class="message-area">
+                    <h3>Global Chat (@all, @user)</h3>
+                    <div id="messages" class="message-content"></div>
+                    <div class="message-input-container">
+                        <input id="message-input" placeholder="Type your message... (e.g., @all Hello)">
+                        <button id="send-btn">Send</button>
+                    </div>
+                </div>
+                <div id="conference-content" class="message-area" style="display: none;"></div>
+                <div id="tab-content">
+                    <div id="register-tab" class="tab-pane">
+                        <h3>Register User</h3>
+                        <input id="admin-reg-username" placeholder="Username">
+                        <input id="admin-reg-password" type="password" placeholder="Password">
+                        <label><input id="admin-reg-is-admin" type="checkbox"> Is Admin</label>
+                        <button id="register-user-btn">Register</button>
+                    </div>
+                    <div id="password-tab" class="tab-pane">
+                        <h3>Change Password</h3>
+                        <input id="admin-change-username" placeholder="Username">
+                        <input id="admin-change-password" type="password" placeholder="New Password">
+                        <button id="change-password-btn">Change</button>
+                    </div>
+                    <div id="delete-tab" class="tab-pane">
+                        <h3>Delete Users</h3>
+                        <div id="user-list"></div>
+                        <button id="delete-selected-btn">Delete Selected</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     <script src="chat.js"></script>
