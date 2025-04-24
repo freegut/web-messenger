@@ -9,21 +9,21 @@ import datetime
 import shutil
 from cryptography.fernet import Fernet
 
+
 print("Starting server...")
 
-# Получаем мастер-ключ из переменной окружения или файла
+
+# Получаем мастер-ключ из файла или переменной окружения
 MASTER_KEY_DIR = "/app/master_key"
 MASTER_KEY_PATH = os.path.join(MASTER_KEY_DIR, "master_key.txt")
 MASTER_KEY = os.getenv("MASTER_KEY")
 
-# Создаём директорию, если она не существует
+
+# Создаём директорию для мастер-ключа, если она не существует
 if not os.path.exists(MASTER_KEY_DIR):
     os.makedirs(MASTER_KEY_DIR)
     print(f"Created directory {MASTER_KEY_DIR}")
 
-print(f"Checking if {MASTER_KEY_PATH} exists: {os.path.exists(MASTER_KEY_PATH)}")
-print(f"Is {MASTER_KEY_PATH} a file? {os.path.isfile(MASTER_KEY_PATH)}")
-print(f"Is {MASTER_KEY_PATH} a directory? {os.path.isdir(MASTER_KEY_PATH)}")
 
 if not MASTER_KEY:
     print("MASTER_KEY not set in environment, checking file...")
@@ -51,13 +51,23 @@ if not MASTER_KEY:
             f.write(MASTER_KEY)
         print(f"New MASTER_KEY generated and saved to {MASTER_KEY_PATH}")
 
+
 MASTER_FERNET = Fernet(MASTER_KEY.encode())
 print("Master key initialized")
+
 
 # Инициализация базы данных
 def init_db():
     print("Initializing database...")
-    conn = sqlite3.connect("chat.db")
+    # Создаём директорию для базы данных
+    db_dir = "/app/db"
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir)
+        print(f"Created directory {db_dir}")
+    
+    db_path = os.path.join(db_dir, "chat.db")
+    print(f"Opening database at {db_path}")
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     # Таблица пользователей
     c.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -92,11 +102,14 @@ def init_db():
     conn.close()
     print("Database initialized")
 
+
 init_db()
+
 
 # Хранилище подключений
 connections = {}  # username -> websocket
 public_keys = {}  # username -> pubkey
+
 
 # Функции шифрования
 def generate_conference_key():
@@ -104,19 +117,23 @@ def generate_conference_key():
     encrypted_key = MASTER_FERNET.encrypt(key.encode()).decode()
     return key, encrypted_key
 
+
 def encrypt_message(message, key):
     fernet = Fernet(key.encode())
     return fernet.encrypt(message.encode()).decode()
+
 
 def decrypt_message(encrypted_message, key):
     fernet = Fernet(key.encode())
     return fernet.decrypt(encrypted_message.encode()).decode()
 
+
 def decrypt_conference_key(encrypted_key):
     return MASTER_FERNET.decrypt(encrypted_key.encode()).decode()
 
+
 async def handle_connection(websocket, path):
-    print(f"New connection on path: {path}")
+    print("New connection")
     username = None
     try:
         async for message in websocket:
@@ -126,7 +143,7 @@ async def handle_connection(websocket, path):
             if data["type"] == "login":
                 username = data["username"]
                 password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
                 user = c.fetchone()
@@ -157,7 +174,7 @@ async def handle_connection(websocket, path):
                     }))
                 if "pubkey" in data:
                     public_keys[data["username"]] = data["pubkey"]
-                    conn = sqlite3.connect("chat.db")
+                    conn = sqlite3.connect("/app/db/chat.db")
                     c = conn.cursor()
                     c.execute("UPDATE users SET pubkey = ? WHERE username = ?", (data["pubkey"], data["username"]))
                     conn.commit()
@@ -166,7 +183,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "create_conference":
                 conf_id = data["conf_id"]
                 members = data["members"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("DELETE FROM conferences WHERE conf_id = ?", (conf_id,))
                 for member in members:
@@ -194,7 +211,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "conference_message":
                 conf_id = data["conf_id"]
                 encrypted_messages = data["encrypted_messages"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -235,7 +252,7 @@ async def handle_connection(websocket, path):
                 password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
                 is_admin_user = data["is_admin"]
                 pubkey = data["pubkey"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 try:
                     c.execute("INSERT INTO users (username, password_hash, is_admin, pubkey) VALUES (?, ?, ?, ?)",
@@ -262,7 +279,7 @@ async def handle_connection(websocket, path):
                     continue
                 target_user = data["username"]
                 new_password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, target_user))
                 if c.rowcount == 0:
@@ -286,7 +303,7 @@ async def handle_connection(websocket, path):
                     }))
                     continue
                 usernames = data["usernames"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 for user in usernames:
                     c.execute("DELETE FROM users WHERE username = ?", (user,))
@@ -304,7 +321,7 @@ async def handle_connection(websocket, path):
                 await broadcast_user_list()
 
             elif data["type"] == "get_conferences":
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT DISTINCT conf_id FROM conferences WHERE username = ?", (username,))
                 conf_ids = [row[0] for row in c.fetchall()]
@@ -321,7 +338,7 @@ async def handle_connection(websocket, path):
 
             elif data["type"] == "get_conference_messages":
                 conf_id = data["conf_id"]
-                conn = sqlite3.connect("chat.db")
+                conn = sqlite3.connect("/app/db/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -359,25 +376,13 @@ async def handle_connection(websocket, path):
                     "messages": decrypted_messages
                 }))
 
-            elif data["type"] == "get_all_users":
-                conn = sqlite3.connect("chat.db")
-                c = conn.cursor()
-                c.execute("SELECT username FROM users")
-                users = [row[0] for row in c.fetchall()]
-                conn.close()
-                await websocket.send(json.dumps({
-                    "type": "all_users",
-                    "users": users
-                }))
-
     except websockets.exceptions.ConnectionClosed:
         print("Connection closed")
-    except Exception as e:
-        print(f"Error: {e}")
     finally:
         if username in connections:
             del connections[username]
             await broadcast_user_list()
+
 
 async def broadcast_user_list():
     online_users = list(connections.keys())
@@ -387,16 +392,19 @@ async def broadcast_user_list():
             "users": online_users
         }))
 
+
 def is_admin(username):
-    conn = sqlite3.connect("chat.db")
+    conn = sqlite3.connect("/app/db/chat.db")
     c = conn.cursor()
     c.execute("SELECT is_admin FROM users WHERE username = ?", (username,))
     result = c.fetchone()
     conn.close()
     return result and result[0]
 
+
 print("Starting WebSocket server on ws://0.0.0.0:8765")
 start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
+
 
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()
