@@ -9,21 +9,17 @@ import datetime
 import shutil
 from cryptography.fernet import Fernet
 
-
 print("Starting server...")
-
 
 # Получаем мастер-ключ из файла или переменной окружения
 MASTER_KEY_DIR = "/app/master_key"
 MASTER_KEY_PATH = os.path.join(MASTER_KEY_DIR, "master_key.txt")
 MASTER_KEY = os.getenv("MASTER_KEY")
 
-
 # Создаём директорию для мастер-ключа, если она не существует
 if not os.path.exists(MASTER_KEY_DIR):
     os.makedirs(MASTER_KEY_DIR)
     print(f"Created directory {MASTER_KEY_DIR}")
-
 
 if not MASTER_KEY:
     print("MASTER_KEY not set in environment, checking file...")
@@ -51,10 +47,8 @@ if not MASTER_KEY:
             f.write(MASTER_KEY)
         print(f"New MASTER_KEY generated and saved to {MASTER_KEY_PATH}")
 
-
 MASTER_FERNET = Fernet(MASTER_KEY.encode())
 print("Master key initialized")
-
 
 # Инициализация базы данных
 def init_db():
@@ -102,14 +96,11 @@ def init_db():
     conn.close()
     print("Database initialized")
 
-
 init_db()
-
 
 # Хранилище подключений
 connections = {}  # username -> websocket
 public_keys = {}  # username -> pubkey
-
 
 # Функции шифрования
 def generate_conference_key():
@@ -117,20 +108,16 @@ def generate_conference_key():
     encrypted_key = MASTER_FERNET.encrypt(key.encode()).decode()
     return key, encrypted_key
 
-
 def encrypt_message(message, key):
     fernet = Fernet(key.encode())
     return fernet.encrypt(message.encode()).decode()
-
 
 def decrypt_message(encrypted_message, key):
     fernet = Fernet(key.encode())
     return fernet.decrypt(encrypted_message.encode()).decode()
 
-
 def decrypt_conference_key(encrypted_key):
     return MASTER_FERNET.decrypt(encrypted_key.encode()).decode()
-
 
 async def handle_connection(websocket, path):
     print("New connection")
@@ -159,6 +146,17 @@ async def handle_connection(websocket, path):
                         "is_admin": bool(user[2])
                     }))
                     await broadcast_user_list()
+                    # Добавляем отправку полного списка пользователей после входа
+                    conn = sqlite3.connect("/app/db/chat.db")
+                    c = conn.cursor()
+                    c.execute("SELECT username FROM users")
+                    all_users = [row[0] for row in c.fetchall()]
+                    conn.close()
+                    print(f"Sending all users to {username} after login: {all_users}")
+                    await websocket.send(json.dumps({
+                        "type": "all_users",
+                        "users": all_users
+                    }))
                 else:
                     await websocket.send(json.dumps({
                         "type": "error",
@@ -179,6 +177,18 @@ async def handle_connection(websocket, path):
                     c.execute("UPDATE users SET pubkey = ? WHERE username = ?", (data["pubkey"], data["username"]))
                     conn.commit()
                     conn.close()
+
+            elif data["type"] == "get_all_users":
+                conn = sqlite3.connect("/app/db/chat.db")
+                c = conn.cursor()
+                c.execute("SELECT username FROM users")
+                all_users = [row[0] for row in c.fetchall()]
+                conn.close()
+                print(f"Sending all users to {username}: {all_users}")
+                await websocket.send(json.dumps({
+                    "type": "all_users",
+                    "users": all_users
+                }))
 
             elif data["type"] == "create_conference":
                 conf_id = data["conf_id"]
@@ -262,6 +272,15 @@ async def handle_connection(websocket, path):
                         "type": "register_success",
                         "message": f"{new_user} registered successfully"
                     }))
+                    # Отправляем обновлённый список всех пользователей всем подключённым клиентам
+                    c.execute("SELECT username FROM users")
+                    all_users = [row[0] for row in c.fetchall()]
+                    print(f"Sending all users to all clients after registration: {all_users}")
+                    for ws in connections.values():
+                        await ws.send(json.dumps({
+                            "type": "all_users",
+                            "users": all_users
+                        }))
                 except sqlite3.IntegrityError:
                     await websocket.send(json.dumps({
                         "type": "error",
@@ -319,6 +338,18 @@ async def handle_connection(websocket, path):
                     "message": f"Deleted users: {', '.join(usernames)}"
                 }))
                 await broadcast_user_list()
+                # Отправляем обновлённый список всех пользователей после удаления
+                conn = sqlite3.connect("/app/db/chat.db")
+                c = conn.cursor()
+                c.execute("SELECT username FROM users")
+                all_users = [row[0] for row in c.fetchall()]
+                conn.close()
+                print(f"Sending all users to all clients after deletion: {all_users}")
+                for ws in connections.values():
+                    await ws.send(json.dumps({
+                        "type": "all_users",
+                        "users": all_users
+                    }))
 
             elif data["type"] == "get_conferences":
                 conn = sqlite3.connect("/app/db/chat.db")
@@ -383,15 +414,14 @@ async def handle_connection(websocket, path):
             del connections[username]
             await broadcast_user_list()
 
-
 async def broadcast_user_list():
     online_users = list(connections.keys())
+    print(f"Broadcasting online users: {online_users}")
     for ws in connections.values():
         await ws.send(json.dumps({
             "type": "user_list",
             "users": online_users
         }))
-
 
 def is_admin(username):
     conn = sqlite3.connect("/app/db/chat.db")
@@ -401,10 +431,8 @@ def is_admin(username):
     conn.close()
     return result and result[0]
 
-
 print("Starting WebSocket server on ws://0.0.0.0:8765")
 start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
-
 
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()

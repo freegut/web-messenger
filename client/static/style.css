@@ -22,7 +22,7 @@ body {
     width: 100%;
     height: 100vh;
     display: flex;
-    flex-direction: row; /* Исправлено: панель и контент рядом */
+    flex-direction: row;
 }
 
 .chat-container {
@@ -33,14 +33,14 @@ body {
 
 .sidebar {
     width: 300px;
-    height: 100%; /* Растягиваем на всю высоту 100% высоты родителя */
+    height: 100%;
     background: #2f3136;
     color: white;
     padding: 20px;
     overflow-y: auto;
     border-right: 1px solid #ddd;
-    display: flex; /* Добавляем flex для лучшего контроля содержимого */
-    flex-direction: column; /* Содержимое внутри .sidebar располагаем вертикально */
+    display: flex;
+    flex-direction: column;
 }
 
 .chat-header {
@@ -131,10 +131,12 @@ button:hover {
 
 .tab-pane {
     display: none;
+    flex: 1;
 }
 
 .tab-pane.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
     animation: fadeIn 0.3s ease-in;
 }
 
@@ -157,7 +159,7 @@ button:hover {
 
 .conference-search input {
     flex: 1;
-    background: #e0e0e0; /* Изменили цвет для лучшей видимости */
+    background: #e0e0e0;
     border: none;
     color: black;
 }
@@ -173,9 +175,12 @@ button:hover {
 }
 
 #conference-list {
+    min-height: 100px;
     max-height: 400px;
     overflow-y: auto;
     margin-bottom: 20px;
+    background: #36393f;
+    border-radius: 4px;
 }
 
 .conference-item {
@@ -203,11 +208,13 @@ button:hover {
     padding: 20px;
     overflow-y: auto;
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .message-area {
     flex: 1;
-    display: flex; /* Убрали display: none, чтобы область была видна */
+    display: flex;
     flex-direction: column;
 }
 
@@ -218,6 +225,10 @@ button:hover {
 #conference-content {
     flex: 1;
     background: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #ddd;
+    border-radius: 6px;
 }
 
 .conference-messages {
@@ -262,14 +273,41 @@ button:hover {
     display: flex;
     gap: 10px;
     align-items: center;
+    padding: 10px;
+    border-top: 1px solid #ddd;
+    z-index: 100;
+    position: relative;
 }
 
 .message-input-container input, .conference-input-container input {
     flex: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: white;
+    color: black;
+    pointer-events: auto;
+    user-select: text;
+    z-index: 101;
+}
+
+.conference-input-container input:disabled {
+    background-color: #e0e0e0;
+    cursor: not-allowed;
 }
 
 .message-input-container button, .conference-input-container button {
-    padding: 10px;
+    padding: 8px 16px;
+    background: #7289da;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    z-index: 101;
+}
+
+.conference-input-container button:hover {
+    background: #677bc4;
 }
 
 #user-list {

@@ -3,7 +3,7 @@ class SecureChat {
         console.log("Initializing SecureChat");
         this.ws = new WebSocket("ws://localhost:8765/ws");
         this.ws.onopen = () => console.log("WebSocket connected");
-        this.ws.onerror = (e) => console.log("WebSocket error:", e);
+        this.ws.onerror = (e) => console.error("WebSocket error:", e);
         this.ws.onmessage = (e) => this.handleMessage(e);
         this.username = null;
         this.keyPair = null;
@@ -17,7 +17,7 @@ class SecureChat {
         this.selectedMembers = new Set();
         this.lastActivity = new Map();
         this.activityTimeouts = new Map();
-        
+
         this.showLoginPrompt();
         this.setupListeners();
         this.startActivityTracking();
@@ -26,7 +26,7 @@ class SecureChat {
     async handleMessage(event) {
         const data = JSON.parse(event.data);
         console.log("Received message:", data);
-        
+
         switch (data.type) {
             case "login_success":
                 alert("Login successful!");
@@ -45,21 +45,24 @@ class SecureChat {
                     });
                 }
                 await this.generateKeys();
-                this.ws.send(JSON.stringify({
+                this.sendIfConnected({
                     type: "get_public_key",
                     username: this.username
-                }));
-                this.ws.send(JSON.stringify({
+                });
+                this.sendIfConnected({
                     type: "get_all_users"
-                }));
-                this.ws.send(JSON.stringify({
+                });
+                this.sendIfConnected({
                     type: "get_conferences"
-                }));
-                // Активируем вкладку Conferences
+                });
                 console.log("Activating Conferences tab after login");
                 document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-                document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
+                document.querySelectorAll(".tab-pane").forEach(pane => {
+                    pane.classList.remove("active");
+                    pane.style.display = "none";
+                });
                 document.getElementById("conf-tab").classList.add("active");
+                document.getElementById("conf-tab").style.display = "flex";
                 document.querySelector(".tab-btn[data-tab='conf-tab']").classList.add("active");
                 this.updateLastActivity(this.username);
                 break;
@@ -77,7 +80,18 @@ class SecureChat {
                 this.updateConference(data.conf_id, data.members);
                 break;
             case "conference_message":
-                this.displayConferenceMessage(data.conf_id, data.from, data.text);
+                if (data.encrypted_messages && data.encrypted_messages[this.username]) {
+                    const encryptedMessage = data.encrypted_messages[this.username];
+                    try {
+                        const decryptedText = await this.decryptMessage(encryptedMessage);
+                        this.displayConferenceMessage(data.conf_id, data.from, decryptedText);
+                    } catch (error) {
+                        console.error("Failed to decrypt message:", error);
+                        this.displayConferenceMessage(data.conf_id, data.from, "[Decryption Failed]");
+                    }
+                } else {
+                    this.displayConferenceMessage(data.conf_id, data.from, data.text);
+                }
                 this.updateLastActivity(data.from);
                 break;
             case "public_key":
@@ -85,18 +99,18 @@ class SecureChat {
                 break;
             case "register_success":
                 alert(`User ${data.message}`);
-                this.ws.send(JSON.stringify({
+                this.sendIfConnected({
                     type: "get_all_users"
-                }));
+                });
                 break;
             case "change_password_success":
                 alert(`Password changed: ${data.message}`);
                 break;
             case "delete_user_success":
                 alert(`Users deleted: ${data.message}`);
-                this.ws.send(JSON.stringify({
+                this.sendIfConnected({
                     type: "get_all_users"
-                }));
+                });
                 break;
             case "conference_list":
                 console.log("Received conference list:", data.conferences);
@@ -109,37 +123,85 @@ class SecureChat {
                 console.log("Received conference messages:", data);
                 const conf = this.conferences.get(data.conf_id);
                 if (conf) {
-                    conf.messages = data.messages.map(msg => ({
-                        from: msg.from,
-                        text: msg.text,
-                        timestamp: new Date(msg.timestamp).getTime()
-                    }));
+                    conf.messages = [];
+                    for (const msg of data.messages) {
+                        let text = msg.text;
+                        if (msg.encrypted_messages && msg.encrypted_messages[this.username]) {
+                            try {
+                                text = await this.decryptMessage(msg.encrypted_messages[this.username]);
+                            } catch (error) {
+                                console.error("Failed to decrypt message:", error);
+                                text = "[Decryption Failed]";
+                            }
+                        }
+                        conf.messages.push({
+                            from: msg.from,
+                            text: text,
+                            timestamp: new Date(msg.timestamp).getTime()
+                        });
+                    }
                     if (this.currentConference === data.conf_id) {
                         this.showConference(data.conf_id);
                     }
                 }
                 break;
+            default:
+                console.warn("Unknown message type received:", data.type);
+                break;
+        }
+    }
+
+    sendIfConnected(message) {
+        if (this.ws.readyState === WebSocket.OPEN) {
+            console.log("Sending message:", message);
+            this.ws.send(JSON.stringify(message));
+        } else {
+            console.error("WebSocket is not connected. Current state:", this.ws.readyState);
+            alert("Connection to server lost. Please try logging in again.");
+            this.logout();
         }
     }
 
     async generateKeys() {
         console.log("Generating RSA key pair for", this.username);
-        this.keyPair = await window.crypto.subtle.generateKey(
-            {
-                name: "RSA-OAEP",
-                modulusLength: 2048,
-                publicExponent: new Uint8Array([1, 0, 1]),
-                hash: "SHA-256"
-            },
-            true,
-            ["encrypt", "decrypt"]
-        );
-        const publicKey = await window.crypto.subtle.exportKey("jwk", this.keyPair.publicKey);
-        this.ws.send(JSON.stringify({
-            type: "get_public_key",
-            username: this.username,
-            pubkey: JSON.stringify(publicKey)
-        }));
+        try {
+            this.keyPair = await window.crypto.subtle.generateKey(
+                {
+                    name: "RSA-OAEP",
+                    modulusLength: 2048,
+                    publicExponent: new Uint8Array([1, 0, 1]),
+                    hash: "SHA-256"
+                },
+                true,
+                ["encrypt", "decrypt"]
+            );
+            const publicKey = await window.crypto.subtle.exportKey("jwk", this.keyPair.publicKey);
+            this.sendIfConnected({
+                type: "get_public_key",
+                username: this.username,
+                pubkey: JSON.stringify(publicKey)
+            });
+        } catch (error) {
+            console.error("Failed to generate RSA keys:", error);
+            alert("Failed to generate encryption keys. Please try again.");
+        }
+    }
+
+    async decryptMessage(encryptedHex) {
+        try {
+            const encryptedBytes = new Uint8Array(
+                encryptedHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+            );
+            const decrypted = await window.crypto.subtle.decrypt(
+                { name: "RSA-OAEP" },
+                this.keyPair.privateKey,
+                encryptedBytes
+            );
+            return new TextDecoder().decode(decrypted);
+        } catch (error) {
+            console.error("Decryption failed:", error);
+            throw error;
+        }
     }
 
     showLoginPrompt() {
@@ -159,22 +221,36 @@ class SecureChat {
         document.getElementById("change-password-btn").addEventListener("click", () => this.changePassword());
         document.getElementById("delete-selected-btn").addEventListener("click", () => this.deleteSelectedUsers());
         document.getElementById("logout-btn").addEventListener("click", () => this.logout());
+        document.getElementById("create-conf-btn-modal").addEventListener("click", () => this.showCreateConferenceModal());
 
         document.querySelectorAll(".tab-btn").forEach(button => {
             button.addEventListener("click", () => {
                 console.log("Tab clicked:", button.dataset.tab);
                 document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-                document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
-                
+                document.querySelectorAll(".tab-pane").forEach(pane => {
+                    pane.classList.remove("active");
+                    pane.style.display = "none";
+                    if (pane.id === "conf-tab") {
+                        const confContent = document.getElementById("conference-content");
+                        if (confContent) confContent.innerHTML = "";
+                    } else if (pane.id === "delete-tab") {
+                        const userList = document.getElementById("user-list");
+                        if (userList) userList.innerHTML = "";
+                    }
+                });
+
                 button.classList.add("active");
                 const tabPane = document.getElementById(button.dataset.tab);
                 if (tabPane) {
                     tabPane.classList.add("active");
+                    tabPane.style.display = "flex";
                 } else {
                     console.error("Tab pane not found for ID:", button.dataset.tab);
                 }
                 if (button.dataset.tab === "delete-tab") {
                     this.renderUserList();
+                } else if (button.dataset.tab === "conf-tab" && this.currentConference) {
+                    this.showConference(this.currentConference);
                 }
             });
         });
@@ -192,11 +268,14 @@ class SecureChat {
         this.activityTimeouts.clear();
         this.currentConference = null;
         this.selectedMembers.clear();
+        this.publicKeys.clear();
         localStorage.removeItem("session_token");
-        this.ws.close();
+        if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.close();
+        }
         this.ws = new WebSocket("ws://localhost:8765/ws");
         this.ws.onopen = () => console.log("WebSocket reconnected after logout");
-        this.ws.onerror = (e) => console.log("WebSocket error:", e);
+        this.ws.onerror = (e) => console.error("WebSocket error after logout:", e);
         this.ws.onmessage = (e) => this.handleMessage(e);
         this.showLoginPrompt();
     }
@@ -209,15 +288,15 @@ class SecureChat {
             alert("Please enter username and password");
             return;
         }
-        console.log("Sending login message");
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "login",
             username: this.username,
             password: password
-        }));
+        });
     }
 
     async sendConferenceMessage(confId) {
+        console.log("Attempting to send message in conference:", confId);
         const safeConfId = encodeURIComponent(confId);
         const messageInput = document.getElementById(`conf-message-input-${safeConfId}`);
         if (!messageInput) {
@@ -226,6 +305,7 @@ class SecureChat {
             return;
         }
         const message = messageInput.value.trim();
+        console.log("Message input value:", message);
         if (!message) {
             alert("Please enter a message");
             return;
@@ -240,40 +320,52 @@ class SecureChat {
             if (member === this.username) continue;
             const pubKey = this.publicKeys.get(member);
             if (!pubKey) {
-                this.ws.send(JSON.stringify({
+                this.sendIfConnected({
                     type: "get_public_key",
                     username: member
-                }));
+                });
                 alert(`Public key for ${member} not found, requesting...`);
                 return;
             }
-            encryptedMessages[member] = await this.encryptMessage(message, pubKey);
+            try {
+                encryptedMessages[member] = await this.encryptMessage(message, pubKey);
+                console.log(`Encrypted message for ${member}:`, encryptedMessages[member]);
+            } catch (error) {
+                console.error(`Failed to encrypt message for ${member}:`, error);
+                alert(`Failed to encrypt message for ${member}. Please try again.`);
+                return;
+            }
         }
         console.log("Sending conference message for:", confId);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "conference_message",
             conf_id: confId,
             encrypted_messages: encryptedMessages
-        }));
-        this.displayConferenceMessage(confId, "You", "[Encrypted]");
+        });
+        this.displayConferenceMessage(confId, "You", message);
         messageInput.value = "";
     }
 
     async encryptMessage(message, pubKeyJwk) {
-        const publicKey = await window.crypto.subtle.importKey(
-            "jwk",
-            JSON.parse(pubKeyJwk),
-            { name: "RSA-OAEP", hash: "SHA-256" },
-            false,
-            ["encrypt"]
-        );
-        const encoded = new TextEncoder().encode(message);
-        const encrypted = await window.crypto.subtle.encrypt(
-            { name: "RSA-OAEP" },
-            publicKey,
-            encoded
-        );
-        return Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, "0")).join("");
+        try {
+            const publicKey = await window.crypto.subtle.importKey(
+                "jwk",
+                JSON.parse(pubKeyJwk),
+                { name: "RSA-OAEP", hash: "SHA-256" },
+                false,
+                ["encrypt"]
+            );
+            const encoded = new TextEncoder().encode(message);
+            const encrypted = await window.crypto.subtle.encrypt(
+                { name: "RSA-OAEP" },
+                publicKey,
+                encoded
+            );
+            return Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, "0")).join("");
+        } catch (error) {
+            console.error("Encryption failed:", error);
+            throw error;
+        }
     }
 
     showCreateConferenceModal() {
@@ -303,8 +395,14 @@ class SecureChat {
             return;
         }
         membersList.innerHTML = "";
+        console.log("Rendering new conference members list, users:", this.users);
+        if (this.users.length === 0 || this.users.length === 1) {
+            membersList.innerHTML = "<p>No other users available.</p>";
+            return;
+        }
         this.users.forEach(user => {
             if (user !== this.username) {
+                console.log("Adding user to new conference members list:", user);
                 const memberDiv = document.createElement("div");
                 memberDiv.className = "member-item";
                 memberDiv.innerHTML = `
@@ -331,23 +429,32 @@ class SecureChat {
         }
         membersList.innerHTML = "";
         const conf = this.conferences.get(this.currentConference);
-        this.users.forEach(user => {
-            if (user !== this.username && !conf.members.includes(user)) {
-                const memberDiv = document.createElement("div");
-                memberDiv.className = "member-item";
-                memberDiv.innerHTML = `
-                    <input type="checkbox" id="add-member-${user}" value="${user}">
-                    <label for="add-member-${user}">${user}</label>
-                `;
-                memberDiv.querySelector("input").addEventListener("change", (e) => {
-                    if (e.target.checked) {
-                        this.selectedMembers.add(user);
-                    } else {
-                        this.selectedMembers.delete(user);
-                    }
-                });
-                membersList.appendChild(memberDiv);
-            }
+        if (!conf) {
+            membersList.innerHTML = "<p>Conference not found.</p>";
+            return;
+        }
+        console.log("Rendering add members list, users:", this.users, "current members:", conf.members);
+        const availableUsers = this.users.filter(user => user !== this.username && !conf.members.includes(user));
+        if (availableUsers.length === 0) {
+            membersList.innerHTML = "<p>No users available to add.</p>";
+            return;
+        }
+        availableUsers.forEach(user => {
+            console.log("Adding user to add members list:", user);
+            const memberDiv = document.createElement("div");
+            memberDiv.className = "member-item";
+            memberDiv.innerHTML = `
+                <input type="checkbox" id="add-member-${user}" value="${user}">
+                <label for="add-member-${user}">${user}</label>
+            `;
+            memberDiv.querySelector("input").addEventListener("change", (e) => {
+                if (e.target.checked) {
+                    this.selectedMembers.add(user);
+                } else {
+                    this.selectedMembers.delete(user);
+                }
+            });
+            membersList.appendChild(memberDiv);
         });
     }
 
@@ -358,17 +465,17 @@ class SecureChat {
         }
         const confId = document.getElementById("new-conf-id").value.trim();
         const members = Array.from(this.selectedMembers);
-        members.push(this.username); // Добавляем текущего пользователя в конференцию
-        if (!confId || members.length <= 1) { // Учитываем, что admin уже добавлен
+        members.push(this.username);
+        if (!confId || members.length <= 1) {
             alert("Please enter conference ID and select at least one member");
             return;
         }
         console.log("Creating conference:", confId, members);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "create_conference",
             conf_id: confId,
             members: members
-        }));
+        });
         this.closeModal("create-conference-modal");
     }
 
@@ -386,11 +493,11 @@ class SecureChat {
         }
         const updatedMembers = [...new Set([...conf.members, ...newMembers])];
         console.log("Adding members to conference:", confId, newMembers);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "create_conference",
             conf_id: confId,
             members: updatedMembers
-        }));
+        });
         this.closeModal("add-members-modal");
     }
 
@@ -410,13 +517,16 @@ class SecureChat {
             return;
         }
         conferenceList.innerHTML = "";
+        if (this.conferences.size === 0) {
+            conferenceList.innerHTML = "<p>No conferences available.</p>";
+            return;
+        }
         this.conferences.forEach((conf, confId) => {
             const confDiv = document.createElement("div");
             confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
             confDiv.textContent = confId;
             confDiv.addEventListener("click", () => {
                 console.log("Conference clicked:", confId);
-                this.currentConference = confId;
                 this.showConference(confId);
             });
             conferenceList.appendChild(confDiv);
@@ -436,41 +546,65 @@ class SecureChat {
             return;
         }
         conferenceList.innerHTML = "";
+        if (this.conferences.size === 0) {
+            conferenceList.innerHTML = "<p>No conferences available.</p>";
+            return;
+        }
+        let hasMatches = false;
         this.conferences.forEach((conf, confId) => {
             if (confId.toLowerCase().includes(searchValue) || conf.members.some(member => member.toLowerCase().includes(searchValue))) {
+                hasMatches = true;
                 const confDiv = document.createElement("div");
                 confDiv.className = `conference-item ${this.currentConference === confId ? "active" : ""}`;
                 confDiv.textContent = confId;
                 confDiv.addEventListener("click", () => {
                     console.log("Conference clicked:", confId);
-                    this.currentConference = confId;
                     this.showConference(confId);
                 });
                 conferenceList.appendChild(confDiv);
             }
         });
+        if (!hasMatches) {
+            conferenceList.innerHTML = "<p>No matching conferences found.</p>";
+        }
     }
 
     showConference(confId) {
         console.log("Showing conference:", confId);
         console.log("Conferences map:", this.conferences);
 
-        // Активируем вкладку Conferences
-        document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-        document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
         const confTab = document.getElementById("conf-tab");
-        if (confTab) {
-            confTab.classList.add("active");
-        } else {
-            console.error("Conferences tab not found");
+        if (!confTab.classList.contains("active")) {
+            console.log("Not on Conferences tab, skipping conference rendering");
+            this.currentConference = confId;
+            return;
         }
-        const confTabBtn = document.querySelector(".tab-btn[data-tab='conf-tab']");
-        if (confTabBtn) {
-            confTabBtn.classList.add("active");
-        } else {
-            console.error("Conferences tab button not found");
+
+        if (this.currentConference === confId) {
+            const conf = this.conferences.get(confId);
+            if (conf) {
+                const safeConfId = encodeURIComponent(confId);
+                console.log("Rendering members for:", confId, conf.members);
+                this.renderConferenceMembers(confId, conf.members);
+                console.log("Rendering messages for:", confId, conf.messages);
+                this.renderConferenceMessages(confId, conf.messages);
+            }
+            return;
         }
-        this.renderConferences();
+
+        this.currentConference = confId;
+
+        const conferenceList = document.getElementById("conference-list");
+        if (conferenceList) {
+            const confItems = conferenceList.querySelectorAll(".conference-item");
+            confItems.forEach(item => {
+                if (item.textContent === confId) {
+                    item.classList.add("active");
+                } else {
+                    item.classList.remove("active");
+                }
+            });
+        }
 
         const conf = this.conferences.get(confId);
         console.log("Conference data:", conf);
@@ -499,21 +633,36 @@ class SecureChat {
             </div>
             <div class="conference-messages" id="conf-messages-${safeConfId}"></div>
             <div class="conference-input-container">
-                <input id="conf-message-input-${safeConfId}" placeholder="Type your message...">
+                <input id="conf-message-input-${safeConfId}" placeholder="Type your message..." autocomplete="off">
                 <button onclick="chat.sendConferenceMessage('${confId}')">Send</button>
             </div>
         `;
         console.log("Conference content HTML set:", confContent.innerHTML);
+
+        const messageInput = document.getElementById(`conf-message-input-${safeConfId}`);
+        if (messageInput) {
+            messageInput.removeAttribute("disabled");
+            messageInput.focus();
+            messageInput.addEventListener("input", (e) => {
+                console.log("Input detected in message field:", e.target.value);
+            });
+            messageInput.addEventListener("keydown", (e) => {
+                console.log("Keydown detected in message field:", e.key);
+            });
+            messageInput.addEventListener("click", () => {
+                console.log("Message input clicked");
+            });
+        }
+
         console.log("Rendering members for:", confId, conf.members);
         this.renderConferenceMembers(confId, conf.members);
         console.log("Rendering messages for:", confId, conf.messages);
         this.renderConferenceMessages(confId, conf.messages);
 
-        // Запрашиваем историю сообщений с сервера
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "get_conference_messages",
             conf_id: confId
-        }));
+        });
     }
 
     renderConferenceMembers(confId, members) {
@@ -548,9 +697,12 @@ class SecureChat {
 
     updateLastActivity(user) {
         this.lastActivity.set(user, Date.now());
-        
+
         if (this.activityTimeouts.has(user)) {
             clearTimeout(this.activityTimeouts.get(user));
+        }
+        if (this.activityTimeouts.has(user + "-offline")) {
+            clearTimeout(this.activityTimeouts.get(user + "-offline"));
         }
 
         const inactiveTimeout = setTimeout(() => {
@@ -571,11 +723,9 @@ class SecureChat {
 
     startActivityTracking() {
         setInterval(() => {
-            this.onlineUsers.forEach(user => {
-                if (this.currentConference) {
-                    this.showConference(this.currentConference);
-                }
-            });
+            if (this.currentConference) {
+                this.showConference(this.currentConference);
+            }
         }, 60 * 1000);
     }
 
@@ -597,6 +747,8 @@ class SecureChat {
                 `;
                 messagesDiv.appendChild(msgDiv);
             });
+        } else {
+            messagesDiv.innerHTML = "<p>No messages yet.</p>";
         }
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
         console.log("Messages div HTML:", messagesDiv.innerHTML);
@@ -636,13 +788,13 @@ class SecureChat {
             return;
         }
         console.log("Registering user:", username, "Is Admin:", isAdmin);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "register_user",
             username: username,
             password: password,
             is_admin: isAdmin,
             pubkey: "{}"
-        }));
+        });
         document.getElementById("admin-reg-username").value = "";
         document.getElementById("admin-reg-password").value = "";
         document.getElementById("admin-reg-is-admin").checked = false;
@@ -656,11 +808,11 @@ class SecureChat {
             return;
         }
         console.log("Changing password for user:", username);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "change_password",
             username: username,
             password: password
-        }));
+        });
         document.getElementById("admin-change-username").value = "";
         document.getElementById("admin-change-password").value = "";
     }
@@ -672,6 +824,10 @@ class SecureChat {
             return;
         }
         userList.innerHTML = "";
+        if (this.users.length === 0 || this.users.length === 1) {
+            userList.innerHTML = "<p>No users available to delete.</p>";
+            return;
+        }
         this.users.forEach(user => {
             if (user !== this.username) {
                 const userDiv = document.createElement("div");
@@ -693,10 +849,10 @@ class SecureChat {
             return;
         }
         console.log("Deleting users:", selectedUsers);
-        this.ws.send(JSON.stringify({
+        this.sendIfConnected({
             type: "delete_users",
             usernames: selectedUsers
-        }));
+        });
     }
 
     updateUserList(users) {
