@@ -7,7 +7,11 @@ import base64
 import os
 import datetime
 import shutil
+import redis
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
 
 print("Starting server...")
 
@@ -50,16 +54,45 @@ if not MASTER_KEY:
 MASTER_FERNET = Fernet(MASTER_KEY.encode())
 print("Master key initialized")
 
+# Подключение к Redis
+redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
+
+# Функция для генерации RSA-ключей
+def generate_rsa_keys():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend()
+    )
+    public_key = private_key.public_key()
+    
+    # Сериализуем публичный ключ в формат JWK
+    public_numbers = public_key.public_numbers()
+    public_jwk = {
+        "kty": "RSA",
+        "n": base64.urlsafe_b64encode(public_numbers.n.to_bytes(
+            (public_numbers.n.bit_length() + 7) // 8, byteorder='big'
+        )).decode('utf-8').rstrip('='),
+        "e": base64.urlsafe_b64encode(public_numbers.e.to_bytes(
+            (public_numbers.e.bit_length() + 7) // 8, byteorder='big'
+        )).decode('utf-8').rstrip('='),
+        "alg": "RSA-OAEP-256",
+        "use": "enc"
+    }
+    
+    # Сериализуем приватный ключ для хранения
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode('utf-8')
+    
+    return json.dumps(public_jwk), private_pem
+
 # Инициализация базы данных
 def init_db():
     print("Initializing database...")
-    # Создаём директорию для базы данных
-    db_dir = "/app/db"
-    if not os.path.exists(db_dir):
-        os.makedirs(db_dir)
-        print(f"Created directory {db_dir}")
-    
-    db_path = os.path.join(db_dir, "chat.db")
+    db_path = "/app/chat.db"
     print(f"Opening database at {db_path}")
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -90,8 +123,10 @@ def init_db():
                     timestamp TEXT
                  )''')
     # Добавление администратора
+    admin_pubkey, admin_privkey = generate_rsa_keys()
     c.execute("INSERT OR IGNORE INTO users (username, password_hash, is_admin, pubkey) VALUES (?, ?, ?, ?)",
-              ("admin", hashlib.sha256("WhereMainShell".encode()).hexdigest(), 1, "{}"))
+              ("admin", hashlib.sha256("WhereMainShell".encode()).hexdigest(), 1, admin_pubkey))
+    redis_client.set(f"private_key:admin", admin_privkey)
     conn.commit()
     conn.close()
     print("Database initialized")
@@ -130,24 +165,36 @@ async def handle_connection(websocket, path):
             if data["type"] == "login":
                 username = data["username"]
                 password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
                 user = c.fetchone()
-                conn.close()
 
                 if user:
                     session_token = base64.b64encode(os.urandom(16)).decode('utf-8')
                     connections[username] = websocket
                     public_keys[username] = user[3]  # pubkey
+                    # Отправляем приватный ключ, если он есть в Redis
+                    private_key = redis_client.get(f"private_key:{username}")
+                    # Получаем публичные ключи всех пользователей
+                    c.execute("SELECT username, pubkey FROM users")
+                    all_public_keys = {row[0]: row[1] for row in c.fetchall() if row[1] and row[1] != "{}"}
+                    for u, pk in all_public_keys.items():
+                        public_keys[u] = pk
+                    conn.close()
                     await websocket.send(json.dumps({
                         "type": "login_success",
                         "session_token": session_token,
-                        "is_admin": bool(user[2])
+                        "is_admin": bool(user[2]),
+                        "private_key": private_key if private_key else None,
+                        "public_keys": all_public_keys  # Отправляем все публичные ключи
                     }))
+                    # Удаляем приватный ключ из Redis после отправки
+                    if private_key:
+                        redis_client.delete(f"private_key:{username}")
                     await broadcast_user_list()
-                    # Добавляем отправку полного списка пользователей после входа
-                    conn = sqlite3.connect("/app/db/chat.db")
+                    # Отправляем полный список пользователей
+                    conn = sqlite3.connect("/app/chat.db")
                     c = conn.cursor()
                     c.execute("SELECT username FROM users")
                     all_users = [row[0] for row in c.fetchall()]
@@ -158,28 +205,44 @@ async def handle_connection(websocket, path):
                         "users": all_users
                     }))
                 else:
+                    conn.close()
                     await websocket.send(json.dumps({
                         "type": "error",
                         "message": "Invalid username or password"
                     }))
 
             elif data["type"] == "get_public_key":
-                if data["username"] in public_keys:
+                conn = sqlite3.connect("/app/chat.db")
+                c = conn.cursor()
+                c.execute("SELECT pubkey FROM users WHERE username = ?", (data["username"],))
+                result = c.fetchone()
+                if result and result[0] and result[0] != "{}":
+                    public_keys[data["username"]] = result[0]
                     await websocket.send(json.dumps({
                         "type": "public_key",
                         "username": data["username"],
-                        "pubkey": public_keys[data["username"]]
+                        "pubkey": result[0]
                     }))
+                else:
+                    await websocket.send(json.dumps({
+                        "type": "error",
+                        "message": f"Public key for {data['username']} not found"
+                    }))
+                
                 if "pubkey" in data:
                     public_keys[data["username"]] = data["pubkey"]
-                    conn = sqlite3.connect("/app/db/chat.db")
-                    c = conn.cursor()
                     c.execute("UPDATE users SET pubkey = ? WHERE username = ?", (data["pubkey"], data["username"]))
                     conn.commit()
-                    conn.close()
+                    for ws in connections.values():
+                        await ws.send(json.dumps({
+                            "type": "public_key",
+                            "username": data["username"],
+                            "pubkey": data["pubkey"]
+                        }))
+                conn.close()
 
             elif data["type"] == "get_all_users":
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT username FROM users")
                 all_users = [row[0] for row in c.fetchall()]
@@ -193,7 +256,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "create_conference":
                 conf_id = data["conf_id"]
                 members = data["members"]
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("DELETE FROM conferences WHERE conf_id = ?", (conf_id,))
                 for member in members:
@@ -221,7 +284,7 @@ async def handle_connection(websocket, path):
             elif data["type"] == "conference_message":
                 conf_id = data["conf_id"]
                 encrypted_messages = data["encrypted_messages"]
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -261,18 +324,23 @@ async def handle_connection(websocket, path):
                 new_user = data["username"]
                 password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
                 is_admin_user = data["is_admin"]
-                pubkey = data["pubkey"]
-                conn = sqlite3.connect("/app/db/chat.db")
+                # Генерируем ключи для нового пользователя
+                pubkey, privkey = generate_rsa_keys()
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 try:
                     c.execute("INSERT INTO users (username, password_hash, is_admin, pubkey) VALUES (?, ?, ?, ?)",
                               (new_user, password_hash, is_admin_user, pubkey))
+                    # Сохраняем приватный ключ в Redis
+                    redis_client.set(f"private_key:{new_user}", privkey)
                     conn.commit()
+                    # Обновляем публичные ключи
+                    public_keys[new_user] = pubkey
                     await websocket.send(json.dumps({
                         "type": "register_success",
                         "message": f"{new_user} registered successfully"
                     }))
-                    # Отправляем обновлённый список всех пользователей всем подключённым клиентам
+                    # Обновляем список пользователей
                     c.execute("SELECT username FROM users")
                     all_users = [row[0] for row in c.fetchall()]
                     print(f"Sending all users to all clients after registration: {all_users}")
@@ -280,6 +348,13 @@ async def handle_connection(websocket, path):
                         await ws.send(json.dumps({
                             "type": "all_users",
                             "users": all_users
+                        }))
+                    # Отправляем публичный ключ нового пользователя всем клиентам
+                    for ws in connections.values():
+                        await ws.send(json.dumps({
+                            "type": "public_key",
+                            "username": new_user,
+                            "pubkey": pubkey
                         }))
                 except sqlite3.IntegrityError:
                     await websocket.send(json.dumps({
@@ -298,7 +373,7 @@ async def handle_connection(websocket, path):
                     continue
                 target_user = data["username"]
                 new_password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, target_user))
                 if c.rowcount == 0:
@@ -322,11 +397,12 @@ async def handle_connection(websocket, path):
                     }))
                     continue
                 usernames = data["usernames"]
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 for user in usernames:
                     c.execute("DELETE FROM users WHERE username = ?", (user,))
                     c.execute("DELETE FROM conferences WHERE username = ?", (user,))
+                    redis_client.delete(f"private_key:{user}")
                     if user in connections:
                         del connections[user]
                     if user in public_keys:
@@ -338,8 +414,8 @@ async def handle_connection(websocket, path):
                     "message": f"Deleted users: {', '.join(usernames)}"
                 }))
                 await broadcast_user_list()
-                # Отправляем обновлённый список всех пользователей после удаления
-                conn = sqlite3.connect("/app/db/chat.db")
+                # Обновляем список пользователей
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT username FROM users")
                 all_users = [row[0] for row in c.fetchall()]
@@ -352,7 +428,7 @@ async def handle_connection(websocket, path):
                     }))
 
             elif data["type"] == "get_conferences":
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT DISTINCT conf_id FROM conferences WHERE username = ?", (username,))
                 conf_ids = [row[0] for row in c.fetchall()]
@@ -369,7 +445,7 @@ async def handle_connection(websocket, path):
 
             elif data["type"] == "get_conference_messages":
                 conf_id = data["conf_id"]
-                conn = sqlite3.connect("/app/db/chat.db")
+                conn = sqlite3.connect("/app/chat.db")
                 c = conn.cursor()
                 c.execute("SELECT encryption_key FROM conference_keys WHERE conf_id = ?", (conf_id,))
                 key = c.fetchone()
@@ -424,7 +500,7 @@ async def broadcast_user_list():
         }))
 
 def is_admin(username):
-    conn = sqlite3.connect("/app/db/chat.db")
+    conn = sqlite3.connect("/app/chat.db")
     c = conn.cursor()
     c.execute("SELECT is_admin FROM users WHERE username = ?", (username,))
     result = c.fetchone()

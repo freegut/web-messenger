@@ -33,6 +33,14 @@ class SecureChat {
                 this.sessionToken = data.session_token;
                 localStorage.setItem("session_token", this.sessionToken);
                 this.isAdmin = data.is_admin;
+                // Сохраняем публичные ключи всех пользователей
+                if (data.public_keys) {
+                    Object.entries(data.public_keys).forEach(([username, pubkey]) => {
+                        this.publicKeys.set(username, pubkey);
+                    });
+                }
+                // Загружаем или генерируем ключи
+                await this.loadOrGenerateKeys(data.private_key);
                 document.getElementById("login").style.display = "none";
                 document.getElementById("chat").style.display = "flex";
                 document.getElementById("user-nick").textContent = this.username;
@@ -44,11 +52,6 @@ class SecureChat {
                         btn.style.display = "block";
                     });
                 }
-                await this.generateKeys();
-                this.sendIfConnected({
-                    type: "get_public_key",
-                    username: this.username
-                });
                 this.sendIfConnected({
                     type: "get_all_users"
                 });
@@ -80,22 +83,28 @@ class SecureChat {
                 this.updateConference(data.conf_id, data.members);
                 break;
             case "conference_message":
-                if (data.encrypted_messages && data.encrypted_messages[this.username]) {
-                    const encryptedMessage = data.encrypted_messages[this.username];
+                if (data.text === "[Encrypted]") {
+                    this.displayConferenceMessage(data.conf_id, data.from, data.text);
+                } else {
                     try {
-                        const decryptedText = await this.decryptMessage(encryptedMessage);
+                        const decryptedText = await this.decryptMessage(data.text);
                         this.displayConferenceMessage(data.conf_id, data.from, decryptedText);
                     } catch (error) {
                         console.error("Failed to decrypt message:", error);
                         this.displayConferenceMessage(data.conf_id, data.from, "[Decryption Failed]");
                     }
-                } else {
-                    this.displayConferenceMessage(data.conf_id, data.from, data.text);
                 }
                 this.updateLastActivity(data.from);
                 break;
             case "public_key":
                 this.publicKeys.set(data.username, data.pubkey);
+                console.log(`Received public key for ${data.username}:`, data.pubkey);
+                // Повторяем попытку отправки сообщения, если ключ был запрошен
+                if (this.pendingMessages && this.pendingMessages[data.username]) {
+                    const { confId, message } = this.pendingMessages[data.username];
+                    delete this.pendingMessages[data.username];
+                    this.sendConferenceMessage(confId, message);
+                }
                 break;
             case "register_success":
                 alert(`User ${data.message}`);
@@ -126,9 +135,9 @@ class SecureChat {
                     conf.messages = [];
                     for (const msg of data.messages) {
                         let text = msg.text;
-                        if (msg.encrypted_messages && msg.encrypted_messages[this.username]) {
+                        if (text === "[Encrypted]") {
                             try {
-                                text = await this.decryptMessage(msg.encrypted_messages[this.username]);
+                                text = await this.decryptMessage(msg.text);
                             } catch (error) {
                                 console.error("Failed to decrypt message:", error);
                                 text = "[Decryption Failed]";
@@ -162,29 +171,104 @@ class SecureChat {
         }
     }
 
-    async generateKeys() {
-        console.log("Generating RSA key pair for", this.username);
+    async loadOrGenerateKeys(privateKeyPem) {
+        console.log("Loading or generating RSA key pair for", this.username);
         try {
-            this.keyPair = await window.crypto.subtle.generateKey(
-                {
-                    name: "RSA-OAEP",
-                    modulusLength: 2048,
-                    publicExponent: new Uint8Array([1, 0, 1]),
-                    hash: "SHA-256"
-                },
-                true,
-                ["encrypt", "decrypt"]
-            );
-            const publicKey = await window.crypto.subtle.exportKey("jwk", this.keyPair.publicKey);
+            if (privateKeyPem) {
+                // Импортируем приватный ключ из PEM
+                const privateKeyBinary = this.pemToArrayBuffer(privateKeyPem);
+                this.keyPair = {
+                    privateKey: await window.crypto.subtle.importKey(
+                        "pkcs8",
+                        privateKeyBinary,
+                        {
+                            name: "RSA-OAEP",
+                            hash: "SHA-256"
+                        },
+                        true,
+                        ["decrypt"]
+                    )
+                };
+                // Импортируем публичный ключ из JWK
+                const pubKeyJwk = this.publicKeys.get(this.username);
+                if (pubKeyJwk) {
+                    this.keyPair.publicKey = await window.crypto.subtle.importKey(
+                        "jwk",
+                        JSON.parse(pubKeyJwk),
+                        {
+                            name: "RSA-OAEP",
+                            hash: "SHA-256"
+                        },
+                        true,
+                        ["encrypt"]
+                    );
+                    console.log("Imported existing key pair for", this.username);
+                } else {
+                    throw new Error("Public key not found for user");
+                }
+            } else {
+                // Генерируем новую пару ключей, если приватный ключ отсутствует
+                this.keyPair = await window.crypto.subtle.generateKey(
+                    {
+                        name: "RSA-OAEP",
+                        modulusLength: 2048,
+                        publicExponent: new Uint8Array([1, 0, 1]),
+                        hash: "SHA-256"
+                    },
+                    true,
+                    ["encrypt", "decrypt"]
+                );
+                const publicKey = await window.crypto.subtle.exportKey("jwk", this.keyPair.publicKey);
+                this.publicKeys.set(this.username, JSON.stringify(publicKey));
+                this.sendIfConnected({
+                    type: "get_public_key",
+                    username: this.username,
+                    pubkey: JSON.stringify(publicKey)
+                });
+                console.log("Generated new RSA key pair for", this.username);
+            }
+        } catch (error) {
+            console.error("Failed to load or generate RSA keys:", error);
+            alert("Failed to load or generate encryption keys. Please try again.");
+        }
+    }
+
+    pemToArrayBuffer(pem) {
+        const pemHeader = "-----BEGIN PRIVATE KEY-----";
+        const pemFooter = "-----END PRIVATE KEY-----";
+        const pemContents = pem.replace(pemHeader, "").replace(pemFooter, "").replace(/\n/g, "");
+        const binaryDerString = atob(pemContents);
+        const binaryDer = new Uint8Array(binaryDerString.length);
+        for (let i = 0; i < binaryDerString.length; i++) {
+            binaryDer[i] = binaryDerString.charCodeAt(i);
+        }
+        return binaryDer.buffer;
+    }
+
+    async requestPublicKey(username, confId, message) {
+        return new Promise((resolve) => {
+            const handler = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === "public_key" && data.username === username) {
+                    this.ws.removeEventListener("message", handler);
+                    resolve(data.pubkey);
+                } else if (data.type === "error" && data.message.includes("Public key")) {
+                    this.ws.removeEventListener("message", handler);
+                    resolve(null);
+                }
+            };
+            this.ws.addEventListener("message", handler);
+
             this.sendIfConnected({
                 type: "get_public_key",
-                username: this.username,
-                pubkey: JSON.stringify(publicKey)
+                username: username
             });
-        } catch (error) {
-            console.error("Failed to generate RSA keys:", error);
-            alert("Failed to generate encryption keys. Please try again.");
-        }
+
+            setTimeout(() => {
+                this.ws.removeEventListener("message", handler);
+                resolve(null);
+            }, 5000);
+        });
     }
 
     async decryptMessage(encryptedHex) {
@@ -295,7 +379,7 @@ class SecureChat {
         });
     }
 
-    async sendConferenceMessage(confId) {
+    async sendConferenceMessage(confId, retryMessage = null) {
         console.log("Attempting to send message in conference:", confId);
         const safeConfId = encodeURIComponent(confId);
         const messageInput = document.getElementById(`conf-message-input-${safeConfId}`);
@@ -304,7 +388,7 @@ class SecureChat {
             alert("Error: Message input not found");
             return;
         }
-        const message = messageInput.value.trim();
+        const message = retryMessage || messageInput.value.trim();
         console.log("Message input value:", message);
         if (!message) {
             alert("Please enter a message");
@@ -316,16 +400,19 @@ class SecureChat {
             return;
         }
         const encryptedMessages = {};
+        this.pendingMessages = this.pendingMessages || {};
         for (const member of conf.members) {
             if (member === this.username) continue;
-            const pubKey = this.publicKeys.get(member);
+            let pubKey = this.publicKeys.get(member);
             if (!pubKey) {
-                this.sendIfConnected({
-                    type: "get_public_key",
-                    username: member
-                });
-                alert(`Public key for ${member} not found, requesting...`);
-                return;
+                console.log(`Public key for ${member} not found, requesting...`);
+                pubKey = await this.requestPublicKey(member, confId, message);
+                if (!pubKey) {
+                    // Сохраняем сообщение для повторной попытки
+                    this.pendingMessages[member] = { confId, message };
+                    alert(`Requested public key for ${member}. Please wait and try again.`);
+                    return;
+                }
             }
             try {
                 encryptedMessages[member] = await this.encryptMessage(message, pubKey);
@@ -792,8 +879,7 @@ class SecureChat {
             type: "register_user",
             username: username,
             password: password,
-            is_admin: isAdmin,
-            pubkey: "{}"
+            is_admin: isAdmin
         });
         document.getElementById("admin-reg-username").value = "";
         document.getElementById("admin-reg-password").value = "";

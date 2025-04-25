@@ -7,6 +7,8 @@ services:
       - ./server/chat.db:/app/chat.db
     environment:
       - MASTER_KEY=WuR1qTOru_Fx85tzO1mzWX-3KVoqm9rKW5QotgHu8qw=  # Замените на безопасный ключ
+    depends_on:
+      - redis
     networks:
       - chat-network
 
@@ -23,8 +25,14 @@ services:
     image: redis:alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     networks:
       - chat-network
+
+volumes:
+  redis-data:
+    name: redis-data
 
 networks:
   chat-network:
