@@ -3,35 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Chat</title>
+    <title>R4</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <link rel="stylesheet" href="style.css">
+    <style>
+        /* Общие стили для логотипа */
+        .header-logo {
+            height: 105px;
+            width: auto;
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
+        /* Стили для страницы входа */
+        .login-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .welcome-text {
+            flex-grow: 1;
+            text-align: left;
+        }
+        
+        /* Стили для чата */
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            padding-right: 60px; /* Оставляем место для логотипа */
+        }
+        .chat-title {
+            flex-grow: 1;
+        }
+    </style>
 </head>
 <body>
+    <!-- Страница входа -->
     <div id="login">
-        <h2>Secure Chat Login</h2>
-        <label>Username:</label>
-        <input type="text" id="login-username" placeholder="Enter username">
-        <label>Password:</label>
-        <input type="password" id="login-password" placeholder="Enter password">
+        <div class="login-header">
+            <h2 class="welcome-text">Welcome to R4</h2>
+            <img src="logo.webp" alt="R4 Logo" class="header-logo">
+        </div>
+        <label>Login</label>
+        <input type="text" id="login-username" placeholder="">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="">
         <button id="login-btn">Login</button>
     </div>
 
+    <!-- Страница чата (изначально скрыта) -->
     <div id="chat" style="display: none;">
         <div class="sidebar">
             <div class="chat-header">
-                <h2>Secure Chat</h2>
+                <h2 class="chat-title">R4 Chat</h2>
                 <button class="logout-btn" id="logout-btn">Logout</button>
             </div>
             <span id="user-nick"></span>
-            <h3>Chats</h3>
+            <h3>ADMIN Panel</h3>
             <div id="tabs">
                 <button class="tab-btn active" data-tab="conf-tab"><i class="fas fa-users"></i> Conferences</button>
                 <button class="tab-btn" data-tab="register-tab" style="display: none;"><i class="fas fa-user-plus"></i> Register User</button>
                 <button class="tab-btn" data-tab="change-password-tab" style="display: none;"><i class="fas fa-key"></i> Change Password</button>
                 <button class="tab-btn" data-tab="delete-tab" style="display: none;"><i class="fas fa-trash"></i> Delete Users</button>
             </div>
-            <!-- Переносим поиск и список конференций в sidebar -->
             <div class="conference-search">
                 <input id="conf-search" placeholder="Search conferences..." oninput="chat.searchConferences()">
                 <button onclick="chat.searchConferences()"><i class="fas fa-search"></i> Search</button>
@@ -40,6 +80,7 @@
             <button id="create-conf-btn-modal" style="display: none;">Create Conference</button>
         </div>
         <div class="main-content">
+            <!-- Остальное содержимое чата без изменений -->
             <div id="conf-tab" class="tab-pane active conference-section">
                 <div id="conference-content" class="message-area"></div>
             </div>
@@ -70,7 +111,7 @@
         </div>
     </div>
 
-    <!-- Модальное окно для создания конференции -->
+    <!-- Модальные окна (без изменений) -->
     <div id="create-conference-modal" class="modal" style="display: none;">
         <div class="modal-content">
             <span class="close-btn" onclick="chat.closeModal('create-conference-modal')">&times;</span>
@@ -83,7 +124,6 @@
         </div>
     </div>
 
-    <!-- Модальное окно для добавления участников -->
     <div id="add-members-modal" class="modal" style="display: none;">
         <div class="modal-content">
             <span class="close-btn" onclick="chat.closeModal('add-members-modal')">&times;</span>
